@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imposition Seripress - Version Print Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        body { background-color: #f3f4f6; }
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+        @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin-slow 2s linear infinite; }
+        @keyframes blink-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .animate-blink-fast { animation: blink-fast 0.8s ease-in-out infinite; }
+        /* Simulation Impression CSS : Saturation réduite et contraste ajusté pour l'écran uniquement */
+        .print-simulated { filter: saturate(0.75) brightness(0.95); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // --- UTILITAIRES VECTORIELS (VRAIES COURBES) ---
+        const simplifyPath = (points, tolerance) => {
+            if (points.length <= 2) return points;
+            const getSqSegDist = (p, p1, p2) => {
+                let x = p1[0], y = p1[1], dx = p2[0] - x, dy = p2[1] - y;
+                if (dx !== 0 || dy !== 0) {
+                    let t = ((p[0] - x) * dx + (p[1] - y) * dy) / (dx * dx + dy * dy);
+                    if (t > 1) { x = p2[0]; y = p2[1]; } else if (t > 0) { x += dx * t; y += dy * t; }
+                }
+                return Math.pow(p[0] - x, 2) + Math.pow(p[1] - y, 2);
+            };
+            const step = (pts, first, last, sqTolerance, simplified) => {
+                let maxSqDist = sqTolerance, index;
+                for (let i = first + 1; i < last; i++) {
+                    let sqDist = getSqSegDist(pts[i], pts[first], pts[last]);
+                    if (sqDist > maxSqDist) { index = i; maxSqDist = sqDist; }
+                }
+                if (maxSqDist > sqTolerance) {
+                    step(pts, first, index, sqTolerance, simplified);
+                    step(pts, index, last, sqTolerance, simplified);
+                } else { simplified.push(pts[last]); }
+            };
+            let simplified = [points[0]];
+            step(points, 0, points.length - 1, tolerance * tolerance, simplified);
+            return simplified;
+        };
+
+        const getSplineData = (points, tension = 0.5, isClosed = false) => {
+            if (points.length < 2) return [];
+            const pts = points.map(p => ({x: p[0], y: p[1]}));
+            if (isClosed) {
+                pts.push(pts[0]);
+                pts.push(pts[1]);
+                pts.unshift(pts[pts.length - 3]);
+            } else {
+                pts.unshift(pts[0]);
+                pts.push(pts[pts.length - 1]);
+            }
+            const res = []; 
+            for (let i = 1; i < pts.length - 2; i++) {
+                const p0 = pts[i-1];
+                const p1 = pts[i];
+                const p2 = pts[i+1];
+                const p3 = pts[i+2];
+                const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
+                const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
+                const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
+                const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
+                res.push({ cp1x, cp1y, cp2x, cp2y, x: p2.x, y: p2.y });
+            }
+            return res;
+        };
+
+        const Icons = {
+            Upload: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            Play: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+            ArrowUp: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>,
+            ArrowDown: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
+            Layout: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>,
+            Scissors: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>,
+            Grid: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+            Maximize: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>,
+            Layers: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
+            Ban: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>,
+            Hand: () => ( <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"> <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/> <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/> <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/> <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/> <path d="M2 14 a 5 5 0 1 1 4 -8" stroke="#3b82f6" strokeWidth="2.5" /> <polyline points="4 6 6 6 6 8" stroke="#3b82f6" strokeWidth="2.5" /> </svg> ),
+            Printer: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
+            Copy: () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>,
+            Clock: () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            CheckCircle: () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            AlertTriangle: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+            AlertCircle: () => <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+            X: ({size=24, className=""}) => <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+            Loader: ({size=24}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
+            Trash: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+            Puzzle: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19.439 15.424a1 1 0 00-1.026 1.025 2.65 2.65 0 01-5.289.09 1 1 0 00-1.05-1.025H7.5a3 3 0 01-3-3V8.52a1 1 0 00-1.025-1.05 2.648 2.648 0 01.089-5.288 1 1 0 001.026-1.05A3 3 0 017.5 4.148h4.574a1 1 0 001.05-1.025 2.65 2.65 0 015.289-.09 1 1 0 001.025 1.05 3 3 0 01-2.985 2.984V12.5a1 1 0 001.05 1.025 2.648 2.648 0 01-.089 5.288 1 1 0 00-1.026 1.05 3 3 0 013.061-4.44z"/></svg>,
+            Search: ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+            Download: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+            Refresh: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+            HelpCircle: ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+            Eye: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        };
+
+        const { useState, useEffect, useRef } = React;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const userEmail = urlParams.get('email') || 'inconnu';
+        // Récupère l'URL WordPress depuis le paramètre d'URL ou la variable globale
+        if (urlParams.get('wp_url')) {
+            window.PRINTMYDTF_WP_URL = decodeURIComponent(urlParams.get('wp_url'));
+        }
+
+        const logDownload = (type) => {
+            fetch('log_download.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: userEmail, action: type, date: new Date().toLocaleString('fr-FR') })
+            }).catch(err => console.error("Erreur log:", err));
+        };
+        
+        const PRESETS = { '1M': { w: 980, h: 575 }, 'A2': { w: 575, h: 420 }, 'A3': { w: 420, h: 280 }, 'A4': { w: 280, h: 202 }, 'A5': { w: 202, h: 132 }, 'A6': { w: 132, h: 100 } };
+
+        // Multiples obligatoires par format (fabriqués sur A2)
+        const FORMAT_MULTIPLES = { 'A3': 2, 'A4': 4, 'A5': 8, 'A6': 16 };
+        // Arrondir au multiple supérieur si nécessaire
+        const roundToMultiple = (nb, format) => {
+            const m = FORMAT_MULTIPLES[format];
+            if (!m || m <= 1) return nb;
+            return Math.ceil(nb / m) * m;
+        };
+
+        // Injecter les métadonnées DPI (chunk pHYs) dans un PNG dataURL
+        const pngSetDpi = (dataUrl, dpi) => {
+            const base64 = dataUrl.split(',')[1];
+            const bin = atob(base64);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            // pHYs chunk : 9 bytes de données = 4 bytes X + 4 bytes Y + 1 byte unit(1=meter)
+            const ppm = Math.round(dpi / 0.0254); // pixels per meter
+            const phys = new Uint8Array(21); // 4 length + 4 type + 9 data + 4 crc
+            const dv = new DataView(phys.buffer);
+            dv.setUint32(0, 9); // data length
+            phys[4] = 0x70; phys[5] = 0x48; phys[6] = 0x59; phys[7] = 0x73; // "pHYs"
+            dv.setUint32(8, ppm);  // X pixels per unit
+            dv.setUint32(12, ppm); // Y pixels per unit
+            phys[16] = 1; // unit = meter
+            // CRC32 sur type+data (bytes 4..16)
+            const crcTable = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
+            let crc = 0xFFFFFFFF;
+            for (let i = 4; i <= 16; i++) crc = crcTable[(crc ^ phys[i]) & 0xFF] ^ (crc >>> 8);
+            crc ^= 0xFFFFFFFF;
+            dv.setUint32(17, crc >>> 0);
+            // Trouver la position après IHDR (signature 8 bytes + IHDR chunk = 8 + 4+4+13+4 = 33)
+            const insertPos = 33;
+            // Vérifier s'il y a déjà un pHYs — chercher et supprimer
+            let cleanBytes = bytes;
+            let pos = 8;
+            while (pos < cleanBytes.length - 12) {
+                const chunkLen = (cleanBytes[pos] << 24) | (cleanBytes[pos+1] << 16) | (cleanBytes[pos+2] << 8) | cleanBytes[pos+3];
+                const chunkType = String.fromCharCode(cleanBytes[pos+4], cleanBytes[pos+5], cleanBytes[pos+6], cleanBytes[pos+7]);
+                if (chunkType === 'pHYs') {
+                    const before = cleanBytes.slice(0, pos);
+                    const after = cleanBytes.slice(pos + 12 + chunkLen);
+                    const merged = new Uint8Array(before.length + after.length);
+                    merged.set(before); merged.set(after, before.length);
+                    cleanBytes = merged;
+                    break;
+                }
+                pos += 12 + chunkLen;
+            }
+            // Insérer le nouveau pHYs après IHDR
+            const result = new Uint8Array(cleanBytes.length + phys.length);
+            result.set(cleanBytes.slice(0, insertPos));
+            result.set(phys, insertPos);
+            result.set(cleanBytes.slice(insertPos), insertPos + phys.length);
+            // Reconvertir en base64 dataURL
+            let binStr = '';
+            for (let i = 0; i < result.length; i++) binStr += String.fromCharCode(result[i]);
+            return 'data:image/png;base64,' + btoa(binStr);
+        };
+
+                // ─────────────────────────────────────────────────────────────
+        // TABLEAU DE PRIX — source unique: WordPress API
+        // https://montageautodtf.fr/wp-json/printmydtf/v1/prix
+        // Si l API est inaccessible, le prix ne sera pas affiche.
+        // ─────────────────────────────────────────────────────────────
+
+                // Fonction utilitaire : trouver le prix unitaire selon format et nb de planches
+        const getPrixUnitaire = (format, nbPlanches, table) => {
+            const lignes = table[format];
+            if (!lignes || nbPlanches <= 0) return null;
+            const ligne = lignes.find(l => nbPlanches >= l.min && nbPlanches <= l.max);
+            return ligne ? ligne.pu : null;
+        };
+
+        // Format monétaire
+        const formatEur = (n) => n !== undefined && n !== null ? n.toFixed(2).replace('.', ',') + ' €' : '—';
+        const parseInput = (val) => { const cleanVal = String(val).replace(',', '.'); return parseFloat(cleanVal) || 0; };
+        const getPngDimensions = async (file) => { return new Promise((resolve) => { const reader = new FileReader(); reader.onload = (e) => { const view = new DataView(e.target.result); if (view.getUint32(0) !== 0x89504e47) { resolve(null); return; } let offset = 8, widthPx = 0, heightPx = 0, pixelPerUnitX = 0, unit = 0; while (offset < view.byteLength) { const length = view.getUint32(offset); const type = view.getUint32(offset + 4); if (type === 0x49484452) { widthPx = view.getUint32(offset + 8); heightPx = view.getUint32(offset + 12); } if (type === 0x70485973) { pixelPerUnitX = view.getUint32(offset + 8); unit = view.getUint8(offset + 16); break; } offset += 12 + length; } if (widthPx > 0 && pixelPerUnitX > 0 && unit === 1) { resolve({ w: Math.round((widthPx / pixelPerUnitX) * 1000), h: Math.round((heightPx / view.getUint32(offset + 12)) * 1000), dpi: Math.round(pixelPerUnitX * 0.0254) }); } else { resolve(null); } }; reader.readAsArrayBuffer(file.slice(0, 1024 * 50)); }); };
+
+        const processThinLines = (imgSrc, finesse) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const canvas = document.createElement('canvas'); const w = img.width, h = img.height; canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const alphaChannel = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) alphaChannel[i] = data[i * 4 + 3]; const radius = Math.ceil(finesse / 2); const eroded = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val < minA) minA = val; } else minA = 0; } } eroded[y * w + x] = minA; } } const dilated = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = eroded[iy * w + ix]; if (val > maxA) maxA = val; } } } dilated[y * w + x] = maxA; } } const dilatedBase = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val > maxA) maxA = val; } } } dilatedBase[y * w + x] = maxA; } } const closed = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = dilatedBase[iy * w + ix]; if (val < minA) minA = val; } } } closed[y * w + x] = minA; } } const finalImgData = ctx.createImageData(w, h); const pureImgData = ctx.createImageData(w, h); let defectCount = 0; for (let i = 0; i < w * h; i++) { const originalAlpha = alphaChannel[i], processedAlpha = dilated[i], closedAlpha = closed[i]; const idx = i * 4; const isThinLine = (originalAlpha > 100 && processedAlpha < 50); const isThinGap = (originalAlpha < 50 && closedAlpha > 100); if (isThinLine) { defectCount++; finalImgData.data[idx] = 255; finalImgData.data[idx+1] = 0; finalImgData.data[idx+2] = 255; finalImgData.data[idx+3] = 255; pureImgData.data[idx] = 255; pureImgData.data[idx+1] = 0; pureImgData.data[idx+2] = 255; pureImgData.data[idx+3] = 255; } else if (isThinGap) { defectCount++; finalImgData.data[idx] = 0; finalImgData.data[idx+1] = 255; finalImgData.data[idx+2] = 0; finalImgData.data[idx+3] = 255; pureImgData.data[idx] = 0; pureImgData.data[idx+1] = 255; pureImgData.data[idx+2] = 0; pureImgData.data[idx+3] = 255; } else if (originalAlpha > 0) { finalImgData.data[idx] = data[idx]; finalImgData.data[idx+1] = data[idx+1]; finalImgData.data[idx+2] = data[idx+2]; finalImgData.data[idx+3] = Math.floor(originalAlpha * 0.4); pureImgData.data[idx+3] = 0; } else { finalImgData.data[idx+3] = 0; pureImgData.data[idx+3] = 0; } } if (defectCount > 0) { ctx.putImageData(finalImgData, 0, 0); const defectsSrc = canvas.toDataURL(); const pureCanvas = document.createElement('canvas'); pureCanvas.width = w; pureCanvas.height = h; pureCanvas.getContext('2d').putImageData(pureImgData, 0, 0); const pureDefectsSrc = pureCanvas.toDataURL(); resolve({ hasIssues: true, defectsSrc, pureDefectsSrc }); } else { resolve({ hasIssues: false, defectsSrc: null, pureDefectsSrc: null }); } }; img.src = imgSrc; }); };
+        const gaussianBlurAlpha = (alpha, w, h, sigma) => {
+            const radius = Math.ceil(sigma * 2);
+            const kernel = []; let sum = 0;
+            for (let i = -radius; i <= radius; i++) { const v = Math.exp(-(i*i)/(2*sigma*sigma)); kernel.push(v); sum += v; }
+            for (let i = 0; i < kernel.length; i++) kernel[i] /= sum;
+            const tmp = new Float32Array(w * h);
+            for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let v = 0; for (let k = -radius; k <= radius; k++) { const ix = Math.max(0, Math.min(w-1, x+k)); v += alpha[y*w+ix] * kernel[k+radius]; } tmp[y*w+x] = v; } }
+            const out = new Float32Array(w * h);
+            for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let v = 0; for (let k = -radius; k <= radius; k++) { const iy = Math.max(0, Math.min(h-1, y+k)); v += tmp[iy*w+x] * kernel[k+radius]; } out[y*w+x] = v; } }
+            return out;
+        };
+        const correctImageFinesse = (imgSrc, finesse) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const w = img.width, h = img.height; const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const alphaChannel = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) alphaChannel[i] = data[i * 4 + 3]; const radius = Math.ceil(finesse / 2); const eroded = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val < minA) minA = val; } else minA = 0; } } eroded[y * w + x] = minA; } } const dilated = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = eroded[iy * w + ix]; if (val > maxA) maxA = val; } } } dilated[y * w + x] = maxA; } } const dilatedBase = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val > maxA) maxA = val; } } } dilatedBase[y * w + x] = maxA; } } const closed = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = dilatedBase[iy * w + ix]; if (val < minA) minA = val; } } } closed[y * w + x] = minA; } }
+            // Construire le canal alpha corrigé + stocker la couleur interpolée pour chaque pixel ajouté
+            const correctedAlpha = new Float32Array(w * h);
+            for (let i = 0; i < w * h; i++) correctedAlpha[i] = alphaChannel[i];
+            // Pour les pixels à ajouter, interpoler la couleur RGB en fonction des voisins opaques pondérés par distance
+            const addedR = new Float32Array(w * h);
+            const addedG = new Float32Array(w * h);
+            const addedB = new Float32Array(w * h);
+            for (let i = 0; i < w * h; i++) {
+                const originalAlpha = alphaChannel[i]; const processedAlpha = dilated[i];
+                if (originalAlpha > 100 && processedAlpha < 50) {
+                    const cy = Math.floor(i / w); const cx = i % w;
+                    for (let dy = -1; dy <= 1; dy++) { for (let dx = -1; dx <= 1; dx++) {
+                        const ny = cy + dy; const nx = cx + dx;
+                        if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                            const nPos = ny * w + nx;
+                            const isProtectedReserve = (alphaChannel[nPos] < 50 && closed[nPos] > 100);
+                            if (!isProtectedReserve && correctedAlpha[nPos] < 128) {
+                                // Pixel à ajouter — interpoler RGB depuis tous les voisins opaques pondérés par 1/distance
+                                let sumW = 0, sumR = 0, sumG = 0, sumB = 0;
+                                for (let ey = -2; ey <= 2; ey++) { for (let ex = -2; ex <= 2; ex++) {
+                                    const oy = ny + ey; const ox = nx + ex;
+                                    if (ox >= 0 && ox < w && oy >= 0 && oy < h) {
+                                        const oPos = oy * w + ox;
+                                        if (alphaChannel[oPos] > 128) {
+                                            const dist = Math.sqrt(ex*ex + ey*ey) + 0.01;
+                                            const w_i = 1.0 / dist;
+                                            sumW += w_i;
+                                            sumR += data[oPos*4]   * w_i;
+                                            sumG += data[oPos*4+1] * w_i;
+                                            sumB += data[oPos*4+2] * w_i;
+                                        }
+                                    }
+                                } }
+                                if (sumW > 0) {
+                                    addedR[nPos] = sumR / sumW;
+                                    addedG[nPos] = sumG / sumW;
+                                    addedB[nPos] = sumB / sumW;
+                                } else {
+                                    addedR[nPos] = data[i*4];
+                                    addedG[nPos] = data[i*4+1];
+                                    addedB[nPos] = data[i*4+2];
+                                }
+                                correctedAlpha[nPos] = 255;
+                            }
+                        }
+                    } }
+                }
+            }
+            // Lissage gaussien sur tout le canal alpha corrigé pour demi-teintes naturelles
+            const sigma = Math.max(1.2, finesse * 0.5);
+            const blurredFull = gaussianBlurAlpha(correctedAlpha, w, h, sigma);
+            const outputData = ctx.createImageData(w, h);
+            for (let i = 0; i < w * h; i++) {
+                const origA = alphaChannel[i];
+                const corrA = correctedAlpha[i];
+                const idx = i * 4;
+                if (corrA > origA) {
+                    // Zone ajoutée : couleur interpolée + alpha lissé
+                    outputData.data[idx]   = Math.round(addedR[i]);
+                    outputData.data[idx+1] = Math.round(addedG[i]);
+                    outputData.data[idx+2] = Math.round(addedB[i]);
+                    outputData.data[idx+3] = Math.round(Math.max(origA, blurredFull[i]));
+                } else {
+                    // Zone originale : préserver couleur et alpha d'origine
+                    outputData.data[idx]   = data[idx];
+                    outputData.data[idx+1] = data[idx+1];
+                    outputData.data[idx+2] = data[idx+2];
+                    outputData.data[idx+3] = origA;
+                }
+            }
+            ctx.putImageData(outputData, 0, 0); resolve(canvas.toDataURL('image/png')); }; img.src = imgSrc; }); };
+        const correctImageReserves = (imgSrc, finesse) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const w = img.width, h = img.height; const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const outputData = ctx.createImageData(w, h); outputData.data.set(data); const alphaChannel = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) alphaChannel[i] = data[i * 4 + 3]; const radius = Math.ceil(finesse / 2); const len = w * h; const eroded = new Uint8Array(len); const dilated = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val < minA) minA = val; if (val > maxA) maxA = val; } else { minA = 0; } } } eroded[y * w + x] = minA; dilated[y * w + x] = maxA; } } const opened = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = eroded[iy * w + ix]; if (val > maxA) maxA = val; } } } opened[y * w + x] = maxA; } } const closed = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = dilated[iy * w + ix]; if (val < minA) minA = val; } } } closed[y * w + x] = minA; } } const isProtected = new Uint8Array(len); for (let i = 0; i < len; i++) { if (alphaChannel[i] > 100 && opened[i] < 50) { isProtected[i] = 1; } } const isTargetReserve = new Uint8Array(len); for (let i = 0; i < len; i++) { if (alphaChannel[i] < 50 && closed[i] > 100) { isTargetReserve[i] = 1; } } for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { const i = y * w + x; if (alphaChannel[i] > 100) { if (isProtected[i] === 1) { continue; } let isNeighborOfReserve = false; checkLoop: for (let dy = -1; dy <= 1; dy++) { for (let dx = -1; dx <= 1; dx++) { if (dx === 0 && dy === 0) continue; const ny = y + dy; const nx = x + dx; if (nx >= 0 && nx < w && ny >= 0 && ny < h) { const ni = ny * w + nx; if (isTargetReserve[ni] === 1) { isNeighborOfReserve = true; break checkLoop; } } } } if (isNeighborOfReserve) { const idx = i * 4; outputData.data[idx + 3] = 0; } } } } ctx.putImageData(outputData, 0, 0); resolve(canvas.toDataURL('image/png')); }; img.src = imgSrc; }); };
+        
+        const createBitmapMask = async (imgSrc, widthMM, heightMM, marginMM, scale = 1) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const w = Math.ceil(widthMM * scale), h = Math.ceil(heightMM * scale), margin = Math.ceil(marginMM * scale); const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const maskW = w + (margin * 2), maskH = h + (margin * 2); const grid = new Uint8Array(maskW * maskH); for(let y=0; y<h; y++) { for(let x=0; x<w; x++) { if(data[(y*w+x)*4 + 3] > 10) { const cx = x + margin, cy = y + margin; for (let dy = -margin; dy <= margin; dy++) { for (let dx = -margin; dx <= margin; dx++) { if (dx*dx + dy*dy <= margin*margin) { const nx = cx + dx, ny = cy + dy; if(nx >= 0 && nx < maskW && ny >= 0 && ny < maskH) { grid[ny * maskW + nx] = 1; } } } } } } } resolve({ w: maskW, h: maskH, grid: grid, margin: margin, scale: scale }); }; img.src = imgSrc; }); };
+
+        // Contour tracing - follows outer boundary of mask
+        const traceContour = (mask) => {
+            const w = mask.w, h = mask.h, grid = mask.grid;
+            const points = []; let startX = -1, startY = -1;
+            for(let y=0; y<h; y++) { for(let x=0; x<w; x++) { if(grid[y*w+x] === 1) { startX = x; startY = y; break; } } if(startX !== -1) break; }
+            if(startX === -1) return [];
+            let cx = startX, cy = startY, dir = 3, limit = 200000;
+            const moves = [[1,0], [0,1], [-1,0], [0,-1]];
+            while(limit-- > 0) {
+                points.push({x: cx, y: cy}); let foundNext = false;
+                for (let i = 0; i < 4; i++) { const nextDir = (dir + 3 + i) % 4; const nx = cx + moves[nextDir][0], ny = cy + moves[nextDir][1]; if (nx >= 0 && nx < w && ny >= 0 && ny < h && grid[ny*w+nx] === 1) { cx = nx; cy = ny; dir = nextDir; foundNext = true; break; } }
+                if (!foundNext || (cx === startX && cy === startY && points.length > 3)) break;
+            }
+            return points;
+        };
+
+        const CutLinesOverlay = ({ items, width, height }) => { const EPSILON = 0.5; const w = parseInput(width); const h = parseInput(height); const vCandidates = new Set(); const hCandidates = new Set(); items.forEach(item => { vCandidates.add(item.x); vCandidates.add(item.x + item.w); hCandidates.add(item.y); hCandidates.add(item.y + item.h); }); const vCuts = Array.from(vCandidates).filter(x => { if (x <= EPSILON || x >= w - EPSILON) return false; return !items.some(item => x > item.x + EPSILON && x < item.x + item.w - EPSILON); }); const hCuts = Array.from(hCandidates).filter(y => { if (y <= EPSILON || y >= h - EPSILON) return false; return !items.some(item => y > item.y + EPSILON && y < item.y + item.h - EPSILON); }); return ( <div className="absolute inset-0 pointer-events-none z-0"> {vCuts.map(x => ( <div key={`v-${x}`} className="absolute top-0 bottom-0 border-l border-red-600" style={{ left: `${x}px`, width: 0 }} /> ))} {hCuts.map(y => ( <div key={`h-${y}`} className="absolute left-0 right-0 border-t border-red-600" style={{ top: `${y}px`, height: 0 }} /> ))} </div> ); };
+
+        class PixelPacker { constructor(width, height) { this.width = Math.ceil(width); this.height = Math.ceil(height); this.sheet = new Uint8Array(this.width * this.height); } findBestPosition(mask) { const limitY = this.height - mask.h; const limitX = this.width - mask.w; if (limitX < 0 || limitY < 0) return null; for (let y = 0; y <= limitY; y++) { for (let x = 0; x <= limitX; x++) { if (!this.checkCollision(mask, x, y)) { return { x, y }; } } } return null; } fit(items, allowRotation = true, sortMode = 'area') { let packedItems = []; if (sortMode === 'area') { items.sort((a, b) => (b.mask.w * b.mask.h) - (a.mask.w * a.mask.h)); } else if (sortMode === 'width') { items.sort((a, b) => Math.max(b.mask.w, b.mask.h) - Math.max(a.mask.w, a.mask.h)); } for (let item of items) { let bestPos = null; let chosenRotated = false; let chosenMask = item.mask; const posNormal = this.findBestPosition(item.mask); let posRotated = null; let rotatedMask = null; if (allowRotation) { rotatedMask = this.rotateMask(item.mask); posRotated = this.findBestPosition(rotatedMask); } if (posNormal && posRotated) { if (posRotated.y < posNormal.y || (posRotated.y === posNormal.y && posRotated.x < posNormal.x)) { bestPos = posRotated; chosenRotated = true; chosenMask = rotatedMask; } else { bestPos = posNormal; chosenRotated = false; chosenMask = item.mask; } } else if (posNormal) { bestPos = posNormal; chosenMask = item.mask; chosenRotated = false; } else if (posRotated) { bestPos = posRotated; chosenMask = rotatedMask; chosenRotated = true; } if (bestPos) { this.place(chosenMask, bestPos.x, bestPos.y); packedItems.push({ ...item, x: bestPos.x + chosenMask.margin, y: bestPos.y + chosenMask.margin, w: chosenRotated ? item.h : item.w, h: chosenRotated ? item.w : item.h, rotated: chosenRotated, mask: chosenMask }); } else { item.packed = false; } } return packedItems; } rotateMask(mask) { const newW = mask.h, newH = mask.w; const newGrid = new Uint8Array(newW * newH); for(let y=0; y<mask.h; y++) { for(let x=0; x<mask.w; x++) { if(mask.grid[y * mask.w + x] === 1) { const nx = mask.h - 1 - y, ny = x; if(nx >= 0 && nx < newW && ny >= 0 && ny < newH) { newGrid[ny * newW + nx] = 1; } } } } return { ...mask, w: newW, h: newH, grid: newGrid, margin: mask.margin }; } checkCollision(mask, x, y) { for (let my = 0; my < mask.h; my++) { const sheetYOffset = (y + my) * this.width; for (let mx = 0; mx < mask.w; mx++) { if (mask.grid[my * mask.w + mx] === 1) { if (this.sheet[sheetYOffset + (x + mx)] === 1) return true; } } } return false; } place(mask, x, y) { for (let my = 0; my < mask.h; my++) { const sheetYOffset = (y + my) * this.width; for (let mx = 0; mx < mask.w; mx++) { if (mask.grid[my * mask.w + mx] === 1) { this.sheet[sheetYOffset + (x + mx)] = 1; } } } } }
+        class GuillotinePacker { constructor(width, height) { this.width = width; this.height = height; this.freeRectangles = [{ x: 0, y: 0, w: width, h: height }]; } fit(items, allowRotation = true, sortMode = 'area') { let packedItems = []; if (sortMode === 'area') { items.sort((a, b) => (b.w * b.h) - (a.w * a.h)); } else if (sortMode === 'width') { items.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)); } items.forEach(item => { const normal = this.findBestScore(item.w, item.h); const rotated = allowRotation ? this.findBestScore(item.h, item.w) : { index: -1, area: Infinity, short: Infinity }; let bestNodeIndex = -1; let isRotated = false; if (normal.index !== -1 && rotated.index !== -1) { if (rotated.area < normal.area) { isRotated = true; bestNodeIndex = rotated.index; } else { isRotated = false; bestNodeIndex = normal.index; } } else if (normal.index !== -1) { bestNodeIndex = normal.index; isRotated = false; } else if (rotated.index !== -1) { bestNodeIndex = rotated.index; isRotated = true; } if (bestNodeIndex !== -1) { const node = this.freeRectangles[bestNodeIndex]; const w = isRotated ? item.h : item.w; const h = isRotated ? item.w : item.h; packedItems.push({ ...item, x: node.x, y: node.y, w, h, rotated: isRotated }); this.splitNode(bestNodeIndex, w, h); } else { item.packed = false; } }); return packedItems; } findBestScore(w, h) { let bestArea = Number.MAX_VALUE; let bestShort = Number.MAX_VALUE; let bestIndex = -1; for (let i = 0; i < this.freeRectangles.length; i++) { const rect = this.freeRectangles[i]; if (w <= rect.w + 0.1 && h <= rect.h + 0.1) { const leftoverArea = (rect.w * rect.h) - (w * h); const shortFit = Math.min(Math.abs(rect.w - w), Math.abs(rect.h - h)); if (leftoverArea < bestArea || (Math.abs(leftoverArea - bestArea) < 0.1 && shortFit < bestShort)) { bestArea = leftoverArea; bestShort = shortFit; bestIndex = i; } } } return { index: bestIndex, area: bestArea, short: bestShort }; } splitNode(nodeIndex, w, h) { const node = this.freeRectangles[nodeIndex]; this.freeRectangles.splice(nodeIndex, 1); const preferHorizontalSplit = (this.width >= this.height); if (preferHorizontalSplit) { if (node.h - h > 0.5) this.freeRectangles.push({ x: node.x, y: node.y + h, w: node.w, h: node.h - h }); if (node.w - w > 0.5) this.freeRectangles.push({ x: node.x + w, y: node.y, w: node.w - w, h: h }); } else { if (node.w - w > 0.5) this.freeRectangles.push({ x: node.x + w, y: node.y, w: node.w - w, h: node.h }); if (node.h - h > 0.5) this.freeRectangles.push({ x: node.x, y: node.y + h, w: w, h: node.h - h }); } } }
+        class MaxRectsPacker { constructor(width, height) { this.width = width; this.height = height; this.freeRectangles = [{ x: 0, y: 0, w: width, h: height }]; } fit(items, allowRotation = true, sortMode = 'area') { let packedItems = []; if (sortMode === 'area') { items.sort((a, b) => (b.w * b.h) - (a.w * a.h)); } else if (sortMode === 'width') { items.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)); } items.forEach(item => { let newNode = this.findNode(item.w, item.h, allowRotation); if (newNode.bestNode) { const { x, y } = newNode.bestNode; const w = newNode.rotated ? item.h : item.w, h = newNode.rotated ? item.w : item.h; packedItems.push({ ...item, x, y, w, h, rotated: newNode.rotated }); this.placeRect(x, y, w, h); } else item.packed = false; }); return packedItems; } findNode(w, h, allowRotation) { let bestNode = null; let bestShort = Number.MAX_VALUE; let bestLong = Number.MAX_VALUE; let rotated = false; const tryFit = (rect, width, height, isRotated) => { if (rect.w >= width && rect.h >= height) { const ls = Math.abs(rect.w - width); const ss = Math.abs(rect.h - height); const short = Math.min(ls, ss); const long = Math.max(ls, ss); const betterFit = short < bestShort || (short === bestShort && long < bestLong); let sameFitBetterPos = false; if (short === bestShort && long === bestLong) { if (!bestNode || rect.y < bestNode.y || (rect.y === bestNode.y && rect.x < bestNode.x)) { sameFitBetterPos = true; } } if (betterFit || sameFitBetterPos) { bestNode = { x: rect.x, y: rect.y, w: width, h: height }; bestShort = short; bestLong = long; rotated = isRotated; } } }; for (let i = 0; i < this.freeRectangles.length; i++) { tryFit(this.freeRectangles[i], w, h, false); if (allowRotation) tryFit(this.freeRectangles[i], h, w, true); } return { bestNode, rotated }; } placeRect(x, y, w, h) { const rect = { x, y, w, h }; let i = 0; while (i < this.freeRectangles.length) { if (this.isIntersecting(this.freeRectangles[i], rect)) { const free = this.freeRectangles[i]; if (free.x < rect.x + rect.w && free.x + free.w > rect.x) { if (free.y < rect.y && free.y + free.h > rect.y) this.freeRectangles.push({ x: free.x, y: free.y, w: free.w, h: rect.y - free.y }); if (free.y < rect.y + rect.h && free.y + free.h > rect.y + rect.h) this.freeRectangles.push({ x: free.x, y: rect.y + rect.h, w: free.w, h: free.y + free.h - (rect.y + rect.h) }); } if (free.y < rect.y + rect.h && free.y + free.h > rect.y) { if (free.x < rect.x && free.x + free.w > rect.x) this.freeRectangles.push({ x: free.x, y: free.y, w: rect.x - free.x, h: free.h }); if (free.x < rect.x + rect.w && free.x + free.w > rect.x + rect.w) this.freeRectangles.push({ x: rect.x + rect.w, y: free.y, w: free.x + free.w - (rect.x + rect.w), h: free.h }); } this.freeRectangles.splice(i, 1); } else i++; } for (let j = 0; j < this.freeRectangles.length; j++) { for (let k = j + 1; k < this.freeRectangles.length; k++) { if (this.isContained(this.freeRectangles[k], this.freeRectangles[j])) { this.freeRectangles.splice(k, 1); k--; } else if (this.isContained(this.freeRectangles[j], this.freeRectangles[k])) { this.freeRectangles.splice(j, 1); j--; break; } } } } isIntersecting(r1, r2) { return r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y; } isContained(a, b) { return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h; } }
+        
+        function App() {
+            const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
+            const [margin, setMargin] = useState(0);
+            const [finesse, setFinesse] = useState(0.3);
+            const [impositionMode, setImpositionMode] = useState('massicot');
+            const [activeTab, setActiveTab] = useState('standard');
+            const [files, setFiles] = useState([]);
+            const [sheets, setSheets] = useState([]);
+            const [stats, setStats] = useState({ totalSheets: 0, details: [] });
+            const [errors, setErrors] = useState([]); 
+            const [isCalculating, setIsCalculating] = useState(false);
+            const [hasCalculated, setHasCalculated] = useState(false);
+            const [dragState, setDragState] = useState(null);
+            const [manualSheets, setManualSheets] = useState(null);
+            const [isAnalyzing, setIsAnalyzing] = useState(false);
+            const [inspectModalFileId, setInspectModalFileId] = useState(null);
+            const [isZoomed, setIsZoomed] = useState(false); 
+            
+            // --- ETATS LOUPE & SAUVEGARDE & SIMULATION ---
+            const [zoomLevel, setZoomLevel] = useState(1);
+            const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+            const [showMagnifier, setShowMagnifier] = useState(false);
+            const [magnifierPos, setMagnifierPos] = useState({ x: 0, y: 0, bgX: 0, bgY: 0, bgW: 0, bgH: 0 });
+            const [previewFile, setPreviewFile] = useState(null); 
+            const [saveMessage, setSaveMessage] = useState(null);
+            const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+            const [scaleFactor, setScaleFactor] = useState(1);
+            const [showHelpModal, setShowHelpModal] = useState(false);
+            const [showMinQtyModal, setShowMinQtyModal] = useState(false);
+            const [simulatePrint, setSimulatePrint] = useState(false);
+
+            // ── ÉTATS TARIFICATION ──
+            const [prixData, setPrixData] = useState(null);        // données WP (null = utilise fallback)
+            const [clientRemise, setClientRemise] = useState(0);   // % remise client (vient de WP)
+            const [codePromo, setCodePromo] = useState('');
+            const [codePromoInput, setCodePromoInput] = useState('');
+            const [promoData, setPromoData] = useState(null);      // {valeur, type:'pct'|'fixe', label}
+            const [promoError, setPromoError] = useState('');
+            const [isAddingToCart, setIsAddingToCart] = useState(false);
+            const [cartMessage, setCartMessage] = useState('');
+            const [pendingOrders, setPendingOrders] = useState([]); // commandes en attente
+            const [orderAdded, setOrderAdded] = useState(false);    // afficher les 2 boutons
+            // Format courant détecté depuis sheetSize
+            const getCurrentFormat = () => {
+                const w = parseInput(sheetSize.w), h = parseInput(sheetSize.h);
+                if ((w===980&&h===575)||(w===575&&h===980)) return '1M';
+                if ((w===575&&h===420)||(w===420&&h===575)) return 'A2';
+                if ((w===420&&h===280)||(w===280&&h===420)) return 'A3';
+                if ((w===280&&h===202)||(w===202&&h===280)) return 'A4';
+                if ((w===202&&h===132)||(w===132&&h===202)) return 'A5';
+                if ((w===132&&h===100)||(w===100&&h===132)) return 'A6';
+                return null;
+            };
+            // Récupérer les données de prix depuis WordPress au chargement
+            React.useEffect(() => {
+                const wpBase = window.PRINTMYDTF_WP_URL || 'https://montageautodtf.fr';
+                fetch(`${wpBase}/wp-json/printmydtf/v1/prix?_=${Date.now()}`, { credentials: 'include', cache: 'no-store' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.table) setPrixData(data.table);
+                        if (data.remise_client) setClientRemise(parseFloat(data.remise_client) || 0);
+                    })
+                    .catch(() => {}); // silencieux, fallback local utilisé
+            }, []);
+            // Vérifier un code promo
+            const handleVerifyPromo = () => {
+                const wpBase = window.PRINTMYDTF_WP_URL || '';
+                setPromoError('');
+                setPromoData(null);
+                if (!codePromoInput.trim()) return;
+                if (!wpBase) { setPromoError('Non disponible hors connexion WordPress'); return; }
+                fetch(`${wpBase}/wp-json/printmydtf/v1/promo?code=${encodeURIComponent(codePromoInput.trim())}`, { credentials: 'include' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.valide) { setPromoData(data); setCodePromo(codePromoInput.trim()); }
+                        else { setPromoError(data.message || 'Code invalide'); }
+                    })
+                    .catch(() => setPromoError('Erreur de vérification'));
+            };
+            // Calcul du prix
+            const calcPrix = () => {
+                const format = getCurrentFormat();
+                const nbBrut = stats.totalSheets;
+                if (!format || nbBrut <= 0) return null;
+                const nb = roundToMultiple(nbBrut, format);
+                const table = prixData;
+                if (!table) return null;
+                const pu = getPrixUnitaire(format, nb, table);
+                if (pu === null) return null;
+                const totalCatalogue = pu * nb;
+                const remiseClientMontant = totalCatalogue * clientRemise / 100;
+                const apresClient = totalCatalogue - remiseClientMontant;
+                let remisePromoMontant = 0;
+                if (promoData) {
+                    remisePromoMontant = promoData.type === 'pct'
+                        ? apresClient * promoData.valeur / 100
+                        : Math.min(promoData.valeur, apresClient);
+                }
+                const totalHT = apresClient - remisePromoMontant;
+                const tva = totalHT * 0.20;
+                const totalTTC = totalHT + tva;
+                return { pu, nb, format, totalCatalogue, clientRemise, remiseClientMontant, apresClient, promoData, remisePromoMontant, totalHT, tva, totalTTC };
+            };
+            const prix = calcPrix();
+
+            // Nombre de petits formats par A2 pour fabrication
+            const FORMATS_PER_A2 = { 'A4': 4, 'A5': 8, 'A6': 16 };
+
+            // Générer les PNGs de la session courante (taille originale, pour exports PDF)
+            const generatePngs = async () => {
+                const pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                const DPI = 300;
+                const MM_TO_PX = DPI / 25.4;
+                const canvasW = Math.round(pW * MM_TO_PX);
+                const canvasH = Math.round(pH * MM_TO_PX);
+                const pngPages = [];
+                for (let i = 0; i < sheets.length; i++) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width  = canvasW;
+                    canvas.height = canvasH;
+                    const ctx = canvas.getContext('2d');
+                    for (const item of sheets[i].items) {
+                        const img = new Image();
+                        await new Promise(res => { img.onload = res; img.src = item.src; });
+                        const x = Math.round(item.x * MM_TO_PX);
+                        const y = Math.round(item.y * MM_TO_PX);
+                        const w = Math.round((item.rotated ? item.realH : item.realW) * MM_TO_PX);
+                        const h = Math.round((item.rotated ? item.realW : item.realH) * MM_TO_PX);
+                        if (item.rotated) {
+                            ctx.save();
+                            ctx.translate(x + w/2, y + h/2);
+                            ctx.rotate(Math.PI / 2);
+                            ctx.drawImage(img, -h/2, -w/2, h, w);
+                            ctx.restore();
+                        } else {
+                            ctx.drawImage(img, x, y, w, h);
+                        }
+                    }
+                    pngPages.push(pngSetDpi(canvas.toDataURL('image/png'), 300));
+                }
+                return pngPages;
+            };
+
+            // Générer les PNGs de fabrication : réimpose A4/A5/A6 sur des planches A2
+            const generateFabPngs = async (originalPngs) => {
+                const format = getCurrentFormat();
+                const perA2 = FORMATS_PER_A2[format];
+                // Si pas un format à réimposer, retourner les PNGs originaux
+                if (!perA2 || !prix) return originalPngs;
+
+                const DPI = 300;
+                const MM_TO_PX = DPI / 25.4;
+                // Dimensions A2 en pixels à 300 DPI
+                const a2W_mm = 575, a2H_mm = 420;
+                const a2W_px = Math.round(a2W_mm * MM_TO_PX);
+                const a2H_px = Math.round(a2H_mm * MM_TO_PX);
+                // Dimensions du petit format en pixels
+                const smallW_mm = parseInput(sheetSize.w), smallH_mm = parseInput(sheetSize.h);
+                const smallW_px = Math.round(smallW_mm * MM_TO_PX);
+                const smallH_px = Math.round(smallH_mm * MM_TO_PX);
+
+                // Calcul de la grille massicotable — tester les 2 orientations, garder la meilleure
+                const cols1 = Math.floor(a2W_mm / smallW_mm);
+                const rows1 = Math.floor(a2H_mm / smallH_mm);
+                const cols2 = Math.floor(a2W_mm / smallH_mm);
+                const rows2 = Math.floor(a2H_mm / smallW_mm);
+                let cols, rows, tileW_px, tileH_px;
+                if (cols1 * rows1 >= cols2 * rows2) {
+                    cols = cols1; rows = rows1; tileW_px = smallW_px; tileH_px = smallH_px;
+                } else {
+                    cols = cols2; rows = rows2; tileW_px = smallH_px; tileH_px = smallW_px;
+                }
+
+                // Charger les images originales
+                const origImages = [];
+                for (const pngData of originalPngs) {
+                    const img = new Image();
+                    await new Promise(res => { img.onload = res; img.src = pngData; });
+                    origImages.push(img);
+                }
+
+                // Nombre total de planches facturées et nombre de A2 nécessaires
+                const totalPlanches = prix.nb;
+                const planchesParA2 = cols * rows;
+                const nbA2 = Math.ceil(totalPlanches / planchesParA2);
+
+                const fabPngs = [];
+                let planchesRestantes = totalPlanches;
+
+                for (let a2idx = 0; a2idx < nbA2; a2idx++) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = a2W_px;
+                    canvas.height = a2H_px;
+                    const ctx = canvas.getContext('2d');
+
+                    // Remplir cette A2 avec les petites planches en grille
+                    let placed = 0;
+                    for (let r = 0; r < rows && placed < planchesRestantes; r++) {
+                        for (let c = 0; c < cols && placed < planchesRestantes; c++) {
+                            // Choisir l'image source (si plusieurs montages uniques, les alterner)
+                            const srcImg = origImages[placed % origImages.length];
+                            const x = c * tileW_px;
+                            const y = r * tileH_px;
+                            ctx.drawImage(srcImg, x, y, tileW_px, tileH_px);
+                            placed++;
+                        }
+                    }
+                    planchesRestantes -= placed;
+                    fabPngs.push(pngSetDpi(canvas.toDataURL('image/png'), 300));
+                }
+
+                return fabPngs;
+            };
+
+            // Ajouter la commande courante aux commandes en attente
+            const handleAddToCart = async () => {
+                if (!prix || sheets.length === 0) return;
+                setIsAddingToCart(true);
+                setCartMessage('⏳ Génération des fichiers...');
+                try {
+                    const pngPages = await generatePngs();
+                    // Pour A4/A5/A6 : réimposer sur A2 pour la fabrication
+                    const fabPages = await generateFabPngs(pngPages);
+                    // Générer le PDF vectoriel de coupe (identique au bouton Coupe)
+                    const pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                    const { jsPDF } = window.jspdf;
+                    const cutDoc = new jsPDF({ orientation: pW > pH ? 'l' : 'p', unit: 'mm', format: [pW, pH] });
+                    for (let idx = 0; idx < sheets.length; idx++) {
+                        if (idx > 0) cutDoc.addPage();
+                        cutDoc.setDrawColor(255, 0, 0); cutDoc.setLineWidth(0.1);
+                        for (const item of sheets[idx].items) {
+                            if (item.mask && impositionMode === 'imbrication') {
+                                let maskSrc = item.src; let maskW = item.realW; let maskH = item.realH;
+                                if (item.rotated) { maskSrc = await rotateImage(item.src, item.realW, item.realH); maskW = item.realH; maskH = item.realW; }
+                                const hdMask = await createBitmapMask(maskSrc, maskW, maskH, Math.max(4, parseInput(margin)) * 0.4, 1.0);
+                                const rawPoints = traceContour(hdMask);
+                                let contourDrawn = false;
+                                if (rawPoints.length > 10) {
+                                    const s = 1.0; const mX = item.x - (hdMask.margin / s); const mY = item.y - (hdMask.margin / s);
+                                    const mmPoints = rawPoints.map(p => [Math.max(0, Math.min(pW, mX + (p.x / s))), Math.max(0, Math.min(pH, mY + (p.y / s)))]);
+                                    const simplified = simplifyPath(mmPoints, 1.0); const curves = getSplineData(simplified, 0.5, true);
+                                    if (curves.length > 0) { const start = simplified[0]; cutDoc.moveTo(Math.max(0,Math.min(pW,start[0])), Math.max(0,Math.min(pH,start[1]))); curves.forEach(c => { cutDoc.curveTo(Math.max(0,Math.min(pW,c.cp1x)), Math.max(0,Math.min(pH,c.cp1y)), Math.max(0,Math.min(pW,c.cp2x)), Math.max(0,Math.min(pH,c.cp2y)), Math.max(0,Math.min(pW,c.x)), Math.max(0,Math.min(pH,c.y))); }); cutDoc.stroke(); contourDrawn = true; }
+                                }
+                                if (!contourDrawn) { const m = Math.max(4, parseInput(margin)) * 0.4; const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH; cutDoc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S'); }
+                            } else {
+                                const m = parseInput(margin); const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH;
+                                cutDoc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S');
+                            }
+                        }
+                    }
+                    const cutPdfRaw = cutDoc.output('datauristring');
+                    const cutPdfBase64 = 'data:application/pdf;base64,' + cutPdfRaw.split('base64,')[1];
+                    const newOrder = {
+                        format: prix.format, nb_planches: prix.nb,
+                        prix_ht: prix.totalHT.toFixed(2), prix_ttc: prix.totalTTC.toFixed(2),
+                        remise_client: prix.clientRemise, code_promo: codePromo,
+                        email: userEmail, png_dessin: fabPages, pdf_coupe: cutPdfBase64
+                    };
+                    setPendingOrders(prev => {
+                        const updated = [...prev, newOrder];
+                        setCartMessage('✅ Commande ' + updated.length + ' ajoutée');
+                        return updated;
+                    });
+                    setOrderAdded(true);
+                } catch(e) { setCartMessage('❌ Erreur : ' + e.message); }
+                finally { setIsAddingToCart(false); }
+            };
+
+            // Réinitialiser le montage pour un nouveau format
+            const handleAutreMontage = () => {
+                setFiles([]);
+                setSheets([]);
+                setStats({ total:0, made:0, details:[] });
+                setCartMessage(`✅ ${pendingOrders.length} commande(s) en attente — ajoutez un nouveau montage`);
+                setOrderAdded(false);
+            };
+
+            // Envoyer toutes les commandes en attente au serveur
+            const handleGoToCart = async () => {
+                const wpBase = window.PRINTMYDTF_WP_URL || '';
+                if (!wpBase) { setCartMessage('❌ Connexion WordPress requise'); return; }
+                setIsAddingToCart(true);
+                setCartMessage('⏳ Envoi au serveur...');
+                try {
+                    const resp = await fetch(`${wpBase}/wp-json/printmydtf/v1/panier`, {
+                        method: 'POST', credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ commandes: pendingOrders })
+                    });
+                    const result = await resp.json();
+                    if (result.success) {
+                        logDownload('PANIER');
+                        window.top.location.href = result.cart_url;
+                    } else { setCartMessage('❌ ' + (result.message || 'Erreur')); }
+                } catch(e) { setCartMessage('❌ Erreur : ' + e.message); }
+                finally { setIsAddingToCart(false); }
+            };
+
+            const viewContainerRef = useRef(null);
+            const originalFile = inspectModalFileId ? files.find(f => f.id === inspectModalFileId) : null;
+            const inspectedFile = previewFile || originalFile;
+            const containerRef = useRef(null); 
+            const imgRef = useRef(null);
+            const imgRightRef = useRef(null);       
+
+            useEffect(() => {
+                if (inspectModalFileId) {
+                    setPreviewFile(null); 
+                    setSaveMessage(null);
+                    setZoomLevel(1);
+                    setShowMagnifier(false);
+                    setShowUnsavedDialog(false);
+                }
+            }, [inspectModalFileId]);
+
+            useEffect(() => {
+                const handleKeyDown = (e) => { if(e.key === 'Control') setIsCtrlPressed(true); };
+                const handleKeyUp = (e) => { if(e.key === 'Control') setIsCtrlPressed(false); };
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('keyup', handleKeyUp);
+                return () => {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('keyup', handleKeyUp);
+                };
+            }, []);
+
+            useEffect(() => { 
+                if (files.length > 0 && hasCalculated && !isCalculating) { 
+                    if (activeTab === 'manual') { 
+                        if (manualSheets) setSheets(manualSheets); 
+                    } else { 
+                        launchImposition(false); 
+                    } 
+                } 
+            }, [activeTab]); 
+
+            useEffect(() => { 
+                if (files.length > 0 && hasCalculated && !isCalculating) { 
+                    launchImposition(true); 
+                } 
+            }, [margin]); 
+
+            useEffect(() => {
+                const calculateScale = () => {
+                    if (!viewContainerRef.current || sheets.length === 0) return;
+                    const containerWidth = viewContainerRef.current.clientWidth;
+                    const containerHeight = viewContainerRef.current.clientHeight;
+                    const PADDING = 40; 
+                    const availableWidth = containerWidth - PADDING;
+                    const availableHeight = containerHeight - PADDING;
+                    const sheetW = parseInput(sheetSize.w);
+                    const sheetH = parseInput(sheetSize.h);
+                    if (sheetW === 0 || sheetH === 0) return;
+                    const scaleX = availableWidth / sheetW;
+                    const scaleY = availableHeight / sheetH;
+                    const newScale = Math.min(scaleX, scaleY);
+                    setScaleFactor(Math.min(Math.max(newScale, 0.1), 1.5));
+                };
+                calculateScale();
+                const observer = new ResizeObserver(calculateScale);
+                if (viewContainerRef.current) { observer.observe(viewContainerRef.current); }
+                return () => observer.disconnect();
+            }, [sheets, sheetSize, hasCalculated]);
+
+            const TabButton = ({ id, label, icon: Icon }) => ( <button onClick={() => setActiveTab(id)} className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-t-lg border-t border-l border-r transition-all relative top-[1px] ${activeTab === id ? 'bg-white text-blue-700 border-gray-300 z-10 shadow-[0_-2px_5px_rgba(0,0,0,0.05)]' : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}`}> <Icon size={14} /> {label} </button> );
+
+            const rotateImage = (src, w, h) => {
+                return new Promise(res => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas'), scale = 4;
+                        canvas.width = h * scale; 
+                        canvas.height = w * scale;
+                        const ctx = canvas.getContext('2d');
+                        ctx.translate((h * scale) / 2, (w * scale) / 2);
+                        ctx.rotate(Math.PI / 2);
+                        ctx.drawImage(img, -(w * scale) / 2, -(h * scale) / 2, w * scale, h * scale);
+                        res(canvas.toDataURL('image/png'));
+                    };
+                    img.src = src;
+                });
+            };
+
+            const handleMouseMoveLoupe = (e) => {
+                if (!containerRef.current) return;
+                const ZOOM = 3; const LOUPE_SIZE = 350; const HALF_LOUPE = LOUPE_SIZE / 2;
+                // Vérifie image gauche
+                if (imgRef.current) {
+                    const imgRect = imgRef.current.getBoundingClientRect();
+                    const imgX = e.clientX - imgRect.left;
+                    const imgY = e.clientY - imgRect.top;
+                    if (imgX >= 0 && imgX <= imgRect.width && imgY >= 0 && imgY <= imgRect.height) {
+                        setShowMagnifier(true);
+                        const bgW = imgRect.width * ZOOM; const bgH = imgRect.height * ZOOM;
+                        const bgX = (imgX * ZOOM) - HALF_LOUPE; const bgY = (imgY * ZOOM) - HALF_LOUPE;
+                        setMagnifierPos({ clientX: e.clientX, clientY: e.clientY, bgX, bgY, bgW, bgH, src: (previewFile || inspectedFile).defectsSrc });
+                        return;
+                    }
+                }
+                // Vérifie image droite
+                if (imgRightRef.current) {
+                    const imgRect = imgRightRef.current.getBoundingClientRect();
+                    const imgX = e.clientX - imgRect.left;
+                    const imgY = e.clientY - imgRect.top;
+                    if (imgX >= 0 && imgX <= imgRect.width && imgY >= 0 && imgY <= imgRect.height) {
+                        setShowMagnifier(true);
+                        const bgW = imgRect.width * ZOOM; const bgH = imgRect.height * ZOOM;
+                        const bgX = (imgX * ZOOM) - HALF_LOUPE; const bgY = (imgY * ZOOM) - HALF_LOUPE;
+                        setMagnifierPos({ clientX: e.clientX, clientY: e.clientY, bgX, bgY, bgW, bgH, src: (previewFile || inspectedFile).pureDefectsSrc });
+                        return;
+                    }
+                }
+                setShowMagnifier(false);
+            };
+
+            // ── PREVIEW BASSE DÉF — ouvre dans un nouvel onglet ──
+            const PREVIEW_SCALE = 2; // ~150 DPI (suffisant pour écran)
+
+            const handleExportPDF = async (mode) => {
+                if (mode !== 'dessin') return;
+                if (sheets.length === 0) return;
+                setIsCalculating(true);
+                setTimeout(async () => {
+                    try {
+                        const pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                        const DPI = 300;
+                        const MM_TO_PX = DPI / 25.4;
+                        const canvasW = Math.round(pW * MM_TO_PX);
+                        const canvasH = Math.round(pH * MM_TO_PX);
+                        for (let i = 0; i < sheets.length; i++) {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = canvasW;
+                            canvas.height = canvasH;
+                            const ctx = canvas.getContext('2d');
+                            for (const item of sheets[i].items) {
+                                const img = new Image();
+                                await new Promise(res => { img.onload = res; img.src = item.src; });
+                                const x = Math.round(item.x * MM_TO_PX);
+                                const y = Math.round(item.y * MM_TO_PX);
+                                const w = Math.round((item.rotated ? item.realH : item.realW) * MM_TO_PX);
+                                const h = Math.round((item.rotated ? item.realW : item.realH) * MM_TO_PX);
+                                if (item.rotated) {
+                                    ctx.save();
+                                    ctx.translate(x + w/2, y + h/2);
+                                    ctx.rotate(Math.PI / 2);
+                                    ctx.drawImage(img, -h/2, -w/2, h, w);
+                                    ctx.restore();
+                                } else {
+                                    ctx.drawImage(img, x, y, w, h);
+                                }
+                            }
+                            const pngData = pngSetDpi(canvas.toDataURL('image/png'), 300);
+                            const link = document.createElement('a');
+                            link.download = `dessin_${Date.now()}_p${i+1}.png`;
+                            link.href = pngData;
+                            link.click();
+                        }
+                        logDownload('DESSIN');
+                    } catch (err) {
+                        console.error("Erreur Export PNG:", err);
+                        setErrors(["Erreur lors du téléchargement du PNG"]);
+                    } finally {
+                        setIsCalculating(false);
+                    }
+                }, 50);
+            };
+
+            const handleExportCut = async () => {
+                if (sheets.length === 0) return;
+                setIsCalculating(true);
+                setTimeout(async () => {
+                    const { jsPDF } = window.jspdf;
+                    const pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                    const doc = new jsPDF({ orientation: pW > pH ? 'l' : 'p', unit: 'mm', format: [pW, pH] });
+                    try {
+                        for (let idx = 0; idx < sheets.length; idx++) {
+                            const sheet = sheets[idx];
+                            if (idx > 0) doc.addPage();
+                            doc.setDrawColor(255, 0, 0); doc.setLineWidth(0.1); 
+                            for (const item of sheet.items) {
+                                if (item.mask && impositionMode === 'imbrication') {
+                                    let maskSrc = item.src; let maskW = item.realW; let maskH = item.realH;
+                                    if (item.rotated) { maskSrc = await rotateImage(item.src, item.realW, item.realH); maskW = item.realH; maskH = item.realW; }
+                                    const hdMask = await createBitmapMask(maskSrc, maskW, maskH, Math.max(4, parseInput(margin)) * 0.4, 1.0);
+                                    const rawPoints = traceContour(hdMask);
+                                    let contourDrawn = false;
+                                    if (rawPoints.length > 10) {
+                                        const s = 1.0; const mX = item.x - (hdMask.margin / s); const mY = item.y - (hdMask.margin / s);
+                                        const mmPoints = rawPoints.map(p => [Math.max(0, Math.min(pW, mX + (p.x / s))), Math.max(0, Math.min(pH, mY + (p.y / s)))]);
+                                        const simplified = simplifyPath(mmPoints, 1.0); const curves = getSplineData(simplified, 0.5, true);
+                                        if (curves.length > 0) { const start = simplified[0]; doc.moveTo(Math.max(0,Math.min(pW,start[0])), Math.max(0,Math.min(pH,start[1]))); curves.forEach(c => { doc.curveTo(Math.max(0,Math.min(pW,c.cp1x)), Math.max(0,Math.min(pH,c.cp1y)), Math.max(0,Math.min(pW,c.cp2x)), Math.max(0,Math.min(pH,c.cp2y)), Math.max(0,Math.min(pW,c.x)), Math.max(0,Math.min(pH,c.y))); }); doc.stroke(); contourDrawn = true; }
+                                    }
+                                    if (!contourDrawn) { const m = Math.max(4, parseInput(margin)) * 0.4; const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH; doc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S'); }
+                                } else {
+                                    const m = parseInput(margin); const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH;
+                                    doc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S');
+                                }
+                            }
+                        }
+                        logDownload('COUPE');
+                        doc.save(`coupe_${Date.now()}.pdf`);
+                    } catch (err) { console.error("Erreur Coupe:", err); setErrors(["Erreur export coupe"]); } finally { setIsCalculating(false); }
+                }, 50);
+            };
+
+            const handleExportComposite = async () => {
+                if (sheets.length === 0) return;
+                setIsCalculating(true);
+                setTimeout(async () => {
+                    const { jsPDF } = window.jspdf;
+                    const pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                    const doc = new jsPDF({ orientation: pW > pH ? 'l' : 'p', unit: 'mm', format: [pW, pH] });
+                    try {
+                        for (let idx = 0; idx < sheets.length; idx++) {
+                            const sheet = sheets[idx];
+                            if (idx > 0) doc.addPage();
+                            for (let j = 0; j < sheet.items.length; j++) {
+                                const item = sheet.items[j];
+                                if (item.rotated) {
+                                    const rotatedSrc = await rotateImage(item.src, item.realW, item.realH);
+                                    doc.addImage(rotatedSrc, 'PNG', item.x, item.y, item.realH, item.realW, undefined, 'FAST');
+                                } else {
+                                    doc.addImage(item.src, 'PNG', item.x, item.y, item.realW, item.realH, undefined, 'FAST');
+                                }
+                            }
+                            doc.setDrawColor(255, 0, 0); doc.setLineWidth(0.1);
+                            for (const item of sheet.items) {
+                                if (item.mask && impositionMode === 'imbrication') {
+                                    let maskSrc = item.src; let maskW = item.realW; let maskH = item.realH;
+                                    if (item.rotated) { maskSrc = await rotateImage(item.src, item.realW, item.realH); maskW = item.realH; maskH = item.realW; }
+                                    const hdMask = await createBitmapMask(maskSrc, maskW, maskH, Math.max(4, parseInput(margin)) * 0.4, 1.0);
+                                    const rawPoints = traceContour(hdMask);
+                                    let contourDrawn = false;
+                                    if (rawPoints.length > 10) {
+                                        const s = 1.0; const mX = item.x - (hdMask.margin / s); const mY = item.y - (hdMask.margin / s);
+                                        const mmPoints = rawPoints.map(p => [Math.max(0, Math.min(pW, mX + (p.x / s))), Math.max(0, Math.min(pH, mY + (p.y / s)))]);
+                                        const simplified = simplifyPath(mmPoints, 1.0); const curves = getSplineData(simplified, 0.5, true);
+                                        if (curves.length > 0) { const start = simplified[0]; doc.moveTo(Math.max(0,Math.min(pW,start[0])), Math.max(0,Math.min(pH,start[1]))); curves.forEach(c => { doc.curveTo(Math.max(0,Math.min(pW,c.cp1x)), Math.max(0,Math.min(pH,c.cp1y)), Math.max(0,Math.min(pW,c.cp2x)), Math.max(0,Math.min(pH,c.cp2y)), Math.max(0,Math.min(pW,c.x)), Math.max(0,Math.min(pH,c.y))); }); doc.stroke(); contourDrawn = true; }
+                                    }
+                                    if (!contourDrawn) { const m = Math.max(4, parseInput(margin)) * 0.4; const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH; doc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S'); }
+                                } else {
+                                    const m = parseInput(margin); const w = item.rotated ? item.realH : item.realW; const h = item.rotated ? item.realW : item.realH;
+                                    doc.rect(item.x - m, item.y - m, w + 2*m, h + 2*m, 'S');
+                                }
+                            }
+                        }
+                        logDownload('COMPOSITE');
+                        doc.save(`composite_${Date.now()}.pdf`);
+                    } catch (err) { console.error("Erreur Composite:", err); setErrors(["Erreur export composite"]); } finally { setIsCalculating(false); }
+                }, 50);
+            };
+
+            const handleManualAnalysis = async () => { if (files.length === 0) return; setIsAnalyzing(true); const updatedFiles = await Promise.all(files.map(async (file) => { const fileDpi = file.sourceDpi || 300; const calculatedFinesse = Math.round(finesse * fileDpi / 25.4); const analysis = await processThinLines(file.src, calculatedFinesse); return { ...file, hasIssues: analysis.hasIssues, defectsSrc: analysis.defectsSrc, pureDefectsSrc: analysis.pureDefectsSrc, _lastFinesse: finesse }; })); setFiles(updatedFiles); setIsAnalyzing(false); };
+            
+            const handleSmartCorrection = async () => { 
+                if (!inspectedFile) return; 
+                setIsAnalyzing(true); 
+                const sourceFile = previewFile || inspectedFile;
+                const calculatedFinesse = (finesse / 0.08) * 0.75; 
+                const newSrc = await correctImageFinesse(sourceFile.src, calculatedFinesse); 
+                const reAnalysis = await processThinLines(newSrc, calculatedFinesse); 
+                setPreviewFile({ ...sourceFile, src: newSrc, hasIssues: reAnalysis.hasIssues, defectsSrc: reAnalysis.defectsSrc, pureDefectsSrc: reAnalysis.pureDefectsSrc });
+                setIsAnalyzing(false); 
+            };
+
+            const handleSmartCorrectionReserves = async () => { 
+                if (!inspectedFile) return; 
+                setIsAnalyzing(true); 
+                const calculatedFinesse = (finesse / 0.08) * 0.75; 
+                const newSrc = await correctImageReserves(inspectedFile.src, calculatedFinesse); 
+                const reAnalysis = await processThinLines(newSrc, calculatedFinesse); 
+                setPreviewFile({ ...inspectedFile, src: newSrc, hasIssues: reAnalysis.hasIssues, defectsSrc: reAnalysis.defectsSrc, pureDefectsSrc: reAnalysis.pureDefectsSrc });
+                setIsAnalyzing(false); 
+            };
+
+            const handleSaveChanges = () => {
+                if (!previewFile || !originalFile) return;
+                const updatedFiles = files.map(f => f.id === originalFile.id ? previewFile : f);
+                setFiles(updatedFiles);
+                setSaveMessage("Dessin sauvegardé");
+                setTimeout(() => setSaveMessage(null), 2000);
+                setPreviewFile(null);
+                if (hasCalculated) launchImposition(true, null, updatedFiles);
+            };
+
+            const handleCloseModal = () => {
+                if (previewFile) { setShowUnsavedDialog(true); } else { setInspectModalFileId(null); }
+            };
+
+            const confirmSave = () => { handleSaveChanges(); setShowUnsavedDialog(false); setInspectModalFileId(null); };
+            const confirmDiscard = () => { setPreviewFile(null); setShowUnsavedDialog(false); setInspectModalFileId(null); };
+            const cancelClose = () => { setShowUnsavedDialog(false); };
+
+            const handleFileUpload = async (e) => { const uploadedFiles = Array.from(e.target.files); e.target.value = null; setIsAnalyzing(true); const newFilesPromises = uploadedFiles.map(async (file) => { if (file.type === 'application/pdf') { return new Promise(async (resolve) => { try { const arrayBuffer = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise; const page = await pdf.getPage(1); const scale = 300 / 72; const viewport = page.getViewport({ scale }); const canvas = document.createElement('canvas'); const context = canvas.getContext('2d'); canvas.width = viewport.width; canvas.height = viewport.height; await page.render({ canvasContext: context, viewport: viewport, background: 'rgba(0,0,0,0)' }).promise; const dataUrl = canvas.toDataURL('image/png'); const widthMM = Math.round((viewport.width / 300) * 25.4); const heightMM = Math.round((viewport.height / 300) * 25.4); resolve({ id: Date.now() + Math.random(), src: dataUrl, name: file.name, originalW: viewport.width, originalH: viewport.height, width: widthMM, height: heightMM, quantity: 1, sourceDpi: 300, hasIssues: false, defectsSrc: null }); } catch (err) { console.error("Erreur PDF", err); resolve(null); } }); } else { return new Promise(async (resolve) => { const headerDims = await getPngDimensions(file); const reader = new FileReader(); reader.onload = (event) => { const img = new Image(); img.onload = () => { let finalW, finalH; if (headerDims) { finalW = headerDims.w; finalH = headerDims.h; } else { const DPI_SCALE = 25.4 / 300; finalW = Math.round(img.naturalWidth * DPI_SCALE); finalH = Math.round(img.naturalHeight * DPI_SCALE); if (finalW < 5) finalW = 50; if (finalH < 5) finalH = 50; } resolve({ id: Date.now() + Math.random(), src: event.target.result, name: file.name, originalW: img.naturalWidth, originalH: img.naturalHeight, width: finalW, height: finalH, quantity: 1, sourceDpi: headerDims ? headerDims.dpi : 300, hasIssues: false, defectsSrc: null }); }; img.src = event.target.result; }; reader.readAsDataURL(file); }); } }); const newFiles = (await Promise.all(newFilesPromises)).filter(f => f !== null); setFiles(prev => [...prev, ...newFiles]); setIsAnalyzing(false); };
+
+            const updateFileParam = (id, field, value) => { setFiles(files.map(f => f.id === id ? { ...f, [field]: value } : f)); };
+            const removeFile = (id) => { setFiles(files.filter(f => f.id !== id)); };
+            const removeAllFiles = () => { setFiles([]); setSheets([]); setStats({ totalSheets: 0, details: [] }); setErrors([]); setHasCalculated(false); setManualSheets(null); setInspectModalFileId(null); };
+
+            useEffect(() => { const handleMouseMove = (e) => { if (!dragState) return; e.preventDefault(); const deltaX = e.clientX - dragState.startX, deltaY = e.clientY - dragState.startY; setSheets(prevSheets => prevSheets.map(sheet => ({ ...sheet, items: sheet.items.map(item => { if (item.uuid === dragState.itemId) { return { ...item, x: dragState.initialItemX + deltaX, y: dragState.initialItemY + deltaY }; } return item; }) }))); }; const handleMouseUp = () => { setDragState(null); }; if (dragState) { window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp); } return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); }; }, [dragState]);
+
+            const handleMouseDown = (e, item) => { if (activeTab !== 'manual') return; e.preventDefault(); e.stopPropagation(); setDragState({ itemId: item.uuid, startX: e.clientX, startY: e.clientY, initialItemX: item.x, initialItemY: item.y }); };
+            const handleDoubleClick = (e, itemToRotate) => { if (activeTab !== 'manual') return; e.preventDefault(); e.stopPropagation(); setSheets(prevSheets => prevSheets.map(sheet => ({ ...sheet, items: sheet.items.map(item => { if (item.uuid === itemToRotate.uuid) { return { ...item, rotated: !item.rotated, w: item.h, h: item.w }; } return item; }) }))); };
+
+            const launchImposition = async (resetManual = true, specificMode = null, overrideFiles = null) => { 
+                const filesToUse = overrideFiles || files; 
+                if (filesToUse.length === 0) return; 
+                const currentMode = specificMode || impositionMode; 
+                let allowRotation = true; 
+                let sortMode = 'area'; 
+                switch(activeTab) { case 'grouped': sortMode = 'none'; break; case 'compact': sortMode = 'optimise'; break; case 'norotate': allowRotation = false; break; default: sortMode = 'area'; break; } 
+                setIsCalculating(true); setHasCalculated(true); setErrors([]); if (resetManual) setManualSheets(null); 
+                setTimeout(async () => { 
+                    const startTime = Date.now(); const TIMEOUT_LIMIT = 30000; const safeMargin = (currentMode === 'imbrication') ? Math.max(4, parseInput(margin)) : parseInput(margin), pageW = parseInput(sheetSize.w) || 100, pageH = parseInput(sheetSize.h) || 100, sheetArea = pageW * pageH; let totalItemArea = 0, fileData = {}; 
+                    filesToUse.forEach(f => { const w = parseInput(f.width), h = parseInput(f.height), q = Math.abs(parseInt(f.quantity)) || 0; if (w > 0 && h > 0 && q > 0) { const area = (w + safeMargin*2) * (h + safeMargin*2); totalItemArea += area * q; fileData[f.id] = { ...f, wCalc: w + safeMargin*2, hCalc: h + safeMargin*2, req: q, area: area, realW: w, realH: h }; } }); 
+                    if (totalItemArea === 0) { setSheets([]); setStats({ totalSheets: 0, details: [] }); setErrors(["Aucun fichier valide."]); setIsCalculating(false); return; } 
+                    if (currentMode === 'imbrication') { 
+                        const IMB_SCALE = 0.4; const masksCache = {}; const packerMarginPx = Math.ceil((safeMargin / 2) * IMB_SCALE); const packerPageW = Math.ceil(pageW * IMB_SCALE) + packerMarginPx * 2; const packerPageH = Math.ceil(pageH * IMB_SCALE) + packerMarginPx * 2; 
+                        for (let fId in fileData) { if (Date.now() - startTime > TIMEOUT_LIMIT) { setErrors(["Calcul interrompu."]); setIsCalculating(false); return; } const file = fileData[fId]; masksCache[fId] = await createBitmapMask(file.src, file.realW, file.realH, safeMargin / 2, IMB_SCALE); } 
+                        let solved = false, bestResult = null; let startRuns = 1; 
+                        for (let currentRuns = startRuns; currentRuns < startRuns + 500; currentRuns++) { 
+                            if (Date.now() - startTime > TIMEOUT_LIMIT) { setErrors(["Calcul interrompu."]); setSheets([]); setIsCalculating(false); return; } 
+                            let currentSheetItems = [], canAttempt = true; const filesToProcess = (sortMode === 'none') ? filesToUse : [...filesToUse]; 
+                            filesToProcess.forEach(f => { const file = fileData[f.id]; if (!file) return; let targetPerSheet = Math.ceil(file.req / currentRuns); if (targetPerSheet < 1) targetPerSheet = 1; const m = masksCache[file.id]; const fitsNormal = (m.w <= packerPageW && m.h <= packerPageH); const fitsRotated = allowRotation && (m.h <= packerPageW && m.w <= packerPageH); if (!fitsNormal && !fitsRotated) canAttempt = false; if (canAttempt) { for(let i=0; i<targetPerSheet; i++) { currentSheetItems.push({ fileId: file.id, src: file.src, mask: masksCache[file.id], w: file.realW, h: file.realH, realW: file.realW, realH: file.realH, uuid: Math.random() }); } } }); 
+                            if (!canAttempt) break;
+                            // Tester toutes combinaisons orientation + tri pour imbrication
+                            let bestPackedImb = [];
+                            const isOptimiseImb = sortMode === 'optimise';
+                            const imbSortModes = isOptimiseImb ? ['area', 'width', 'none'] : [sortMode];
+                            const imbOrients = allowRotation ? [[false,false],[false,true],[true,false],[true,true]] : [[false,false]];
+                            const rotateMaskFn = (mask) => { const g = new Uint8Array(mask.h * mask.w); for(let y=0;y<mask.h;y++) for(let x=0;x<mask.w;x++) { if(mask.grid[y*mask.w+x]===1) { const nx=mask.h-1-y, ny=x; g[ny*mask.h+nx]=1; } } return { w: mask.h, h: mask.w, margin: mask.margin, grid: g }; };
+                            outerImb: for (const sm of imbSortModes) {
+                                for (const [preRot, rot] of imbOrients) {
+                                    const variant = preRot
+                                        ? currentSheetItems.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, mask: rotateMaskFn(it.mask), _prerotated: true }))
+                                        : currentSheetItems.map(it => ({...it}));
+                                    const p = new PixelPacker(packerPageW, packerPageH);
+                                    const res = p.fit(variant, rot, sm);
+                                    const fixedRes = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
+                                    if (fixedRes.length > bestPackedImb.length) bestPackedImb = fixedRes;
+                                    if (bestPackedImb.length === currentSheetItems.length) break outerImb;
+                                }
+                            }
+                            const packedItems = bestPackedImb;
+                            if (packedItems.length === currentSheetItems.length) { solved = true; const rescaledItems = packedItems.map(pi => ({ ...pi, x: pi.x / IMB_SCALE - safeMargin / 2, y: pi.y / IMB_SCALE - safeMargin / 2 })); bestResult = { items: rescaledItems, runs: currentRuns, efficiency: "N/A" }; break; } 
+                        } 
+                        if (!solved || !bestResult) { setErrors(["Imbrication impossible."]); setSheets([]); } else { let countsOnSheet = {}; bestResult.items.forEach(item => { countsOnSheet[item.fileId] = (countsOnSheet[item.fileId] || 0) + 1; }); let statsMap = {}; Object.values(fileData).forEach(f => { const onSheet = countsOnSheet[f.id] || 0; statsMap[f.id] = { name: f.name, src: f.src, req: f.req, made: onSheet * bestResult.runs }; }); setSheets([{ id: 1, items: bestResult.items, copies: bestResult.runs, efficiency: bestResult.efficiency }]); setStats({ totalSheets: bestResult.runs, uniqueMontages: 1, details: Object.values(statsMap).map(s => ({ id: Math.random(), ...s })), detailsMap: statsMap }); } setIsCalculating(false); return; 
+                    } 
+                    let solved = false, bestResult = null; let startRuns = 1; 
+                    for (let currentRuns = startRuns; currentRuns < startRuns + 1000; currentRuns++) { 
+                        if (Date.now() - startTime > TIMEOUT_LIMIT) { setErrors(["Calcul interrompu."]); setSheets([]); setIsCalculating(false); return; } 
+                        let currentSheetItems = [], canAttempt = true; 
+                        filesToUse.forEach(f => { const file = fileData[f.id]; if (!file) return; let targetPerSheet = Math.ceil(file.req / currentRuns); if (targetPerSheet < 1) targetPerSheet = 1; if (file.wCalc > pageW && file.wCalc > pageH) canAttempt = false; if (canAttempt) { for(let i=0; i<targetPerSheet; i++) { currentSheetItems.push({ fileId: file.id, src: file.src, w: file.wCalc, h: file.hCalc, realW: file.realW, realH: file.realH, uuid: Math.random() }); } } }); 
+                        if (!canAttempt) break;
+                        // Tester toutes les combinaisons — garder le meilleur
+                        let packedItems = [];
+                        const buildVariant = (items, preRotate) => preRotate
+                            ? items.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, _prerotated: true }))
+                            : items.map(it => ({...it}));
+                        const fixRotated = (res) => res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
+                        const isOptimise = sortMode === 'optimise';
+                        const sortModesToTry = isOptimise ? ['area', 'width', 'none'] : [sortMode];
+                        const packersToTry = isOptimise ? ['massicot', 'imbrique'] : [currentMode];
+                        const orientationsToTry = allowRotation ? [[false,false],[false,true],[true,false],[true,true]] : [[false,false]];
+                        for (const sm of sortModesToTry) {
+                            for (const pm of packersToTry) {
+                                for (const [preRot, rot] of orientationsToTry) {
+                                    if (!allowRotation && (preRot || rot)) continue;
+                                    const variant = buildVariant(currentSheetItems, preRot);
+                                    const isMassiMode = (currentMode === 'massicot' || currentMode === 'imbrique');
+                                    const packW = isMassiMode ? pageW + safeMargin*2 : pageW;
+                                    const packH = isMassiMode ? pageH + safeMargin*2 : pageH;
+                                    let p = pm === 'massicot' ? new GuillotinePacker(packW, packH) : new MaxRectsPacker(packW, packH);
+                                    let res = fixRotated(p.fit(variant.map(it=>({...it})), rot, sm));
+                                    if (isMassiMode) res = res.map(it => ({ ...it, x: it.x - safeMargin, y: it.y - safeMargin }));
+                                    if (res.length > packedItems.length) packedItems = res;
+                                    if (packedItems.length === currentSheetItems.length) break;
+                                }
+                                if (packedItems.length === currentSheetItems.length) break;
+                            }
+                            if (packedItems.length === currentSheetItems.length) break;
+                        }
+                        if (packedItems.length === currentSheetItems.length) { solved = true; const usedArea = packedItems.reduce((acc, i) => acc + (i.w * i.h), 0); bestResult = { items: packedItems, runs: currentRuns, efficiency: (usedArea / sheetArea * 100).toFixed(1) }; break; } 
+                    } 
+                    if (!solved || !bestResult) { setErrors(["Arrangement introuvable."]); setSheets([]); } else { let countsOnSheet = {}; bestResult.items.forEach(item => { countsOnSheet[item.fileId] = (countsOnSheet[item.fileId] || 0) + 1; }); let statsMap = {}; Object.values(fileData).forEach(f => { const onSheet = countsOnSheet[f.id] || 0; statsMap[f.id] = { name: f.name, src: f.src, req: f.req, made: onSheet * bestResult.runs }; }); setSheets([{ id: 1, items: bestResult.items, copies: bestResult.runs, efficiency: bestResult.efficiency }]); setStats({ totalSheets: bestResult.runs, uniqueMontages: 1, details: Object.values(statsMap).map(s => ({ id: Math.random(), ...s })), detailsMap: statsMap }); } setIsCalculating(false); 
+                }, 50); 
+            };
+
+            const fillPageWithImage = () => {
+                if (files.length !== 1) return;
+                const file = files[0];
+                const m = parseInput(margin), pW = parseInput(sheetSize.w), pH = parseInput(sheetSize.h);
+                const iW = parseInput(file.width) + m*2, iH = parseInput(file.height) + m*2;
+                let q = Math.floor((pW * pH) / (iW * iH)); if (q > 500) q = 500;
+                while (q > 0) {
+                const packW = (impositionMode === 'massicot' || impositionMode === 'imbrique') ? pW + m*2 : pW;
+                const packH = (impositionMode === 'massicot' || impositionMode === 'imbrique') ? pH + m*2 : pH;
+                const packer = (impositionMode === 'massicot') ? new GuillotinePacker(packW, packH) : new MaxRectsPacker(packW, packH);
+                    const items = Array(q).fill(null).map(() => ({ w: iW, h: iH }));
+                    let sortModeSim = 'area'; if (activeTab === 'compact') sortModeSim = 'optimise'; if (activeTab === 'grouped') sortModeSim = 'none';
+                    if (packer.fit(items, activeTab !== 'norotate', sortModeSim).length === q) break;
+                    q--;
+                }
+                if (q > 0) {
+                    const updatedFiles = files.map(f => f.id === file.id ? { ...f, quantity: q } : f);
+                    setFiles(updatedFiles);
+                    launchImposition(true, null, updatedFiles);
+                }
+            };
+
+            const getFileStats = (fileId) => (stats.detailsMap && stats.detailsMap[fileId]) ? stats.detailsMap[fileId] : null;
+            const handleInspectClick = (id) => { setInspectModalFileId(id); }; 
+            const handleModeSelection = (mode) => { if (mode === 'imbrication' && parseInput(margin) < 4) { setMargin('4'); } setImpositionMode(mode); if (files.length > 0) launchImposition(true, mode); };
+            const handlePresetChange = (e) => { const val = e.target.value; const preset = PRESETS[val]; if (preset) { setSheetSize({ w: preset.w, h: preset.h }); if (['A3','A4','A5','A6'].includes(val)) setShowMinQtyModal(true); } };
+
+            return (
+                <div className="flex h-screen w-full bg-gray-100 font-sans overflow-hidden text-sm">
+                    <svg style={{ position: 'absolute', width: 0, height: 0 }}><defs><filter id="outline-effect"><feMorphology in="SourceAlpha" result="DILATED" operator="dilate" radius={margin} /><feFlood floodColor="#fbcfe8" result="PINK" /><feComposite in="PINK" in2="DILATED" operator="in" result="OUTLINE" /><feMerge><feMergeNode in="OUTLINE" /><feMergeNode in="SourceGraphic" /></feMerge></filter></defs></svg>
+                    {showHelpModal && (
+                        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowHelpModal(false)}>
+                            <div className="bg-white p-6 rounded-lg shadow-2xl max-w-md w-full relative" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => setShowHelpModal(false)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"><Icons.X size={20}/></button>
+                                <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.HelpCircle size={24} className="text-blue-600"/> Aide Finesse & Reserves</h3>
+<div className="text-sm text-gray-600 space-y-3 text-justify">
+    <p>Ce test permet de visualiser les finesses inferieures a 0.3mm (reglable de 0.1 a 0.5mm).</p>
+    <p><strong>Pour les finesses :</strong> 0.3 mm est le minimum, 0.5 est plus sur. Les tres faibles largeurs risquent d'etre mal encollees.</p>
+    <p><strong>Pour les reserves :</strong> 0.3 mm est le minimum, 0.5 est plus sur. Les tres faibles reserves risquent de se boucher notamment si elles sont en pointe.</p>
+    <p>En cliquant sur le bouton a cote des references du transfert, vous pouvez corriger automatiquement les finesses et les reserves par increment de 2 pixels en 300dpi.</p>
+    <p className="italic text-xs border-t pt-2 mt-2 text-orange-600"><strong>Attention :</strong> sur des lettres de petite taille, ou des motifs compliqués le fait d'agrandir des finesses peut retrecir des reserves et inversement</p>
+</div>
+                                <button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold transition-colors">Compris</button>
+                            </div>
+                        </div>
+                    )}
+                    {showMinQtyModal && (
+                        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowMinQtyModal(false)}>
+                            <div className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full relative" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => setShowMinQtyModal(false)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"><Icons.X size={20}/></button>
+                                <h3 className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">📋 Quantités minimales</h3>
+                                <p className="text-sm text-gray-600 mb-4">Pour les transferts de A6 à A3, les quantités minimales de commande sont :</p>
+                                <table className="w-full text-sm border-collapse mb-4">
+                                    <thead>
+                                        <tr className="bg-green-50">
+                                            <th className="border border-gray-200 px-3 py-2 text-left font-bold text-gray-700">Format</th>
+                                            <th className="border border-gray-200 px-3 py-2 text-center font-bold text-gray-700">Qté mini</th>
+                                            <th className="border border-gray-200 px-3 py-2 text-center font-bold text-gray-700">Multiple de</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td className="border border-gray-200 px-3 py-2 font-semibold">A3</td><td className="border border-gray-200 px-3 py-2 text-center">2</td><td className="border border-gray-200 px-3 py-2 text-center">2</td></tr>
+                                        <tr className="bg-gray-50"><td className="border border-gray-200 px-3 py-2 font-semibold">A4</td><td className="border border-gray-200 px-3 py-2 text-center">4</td><td className="border border-gray-200 px-3 py-2 text-center">4</td></tr>
+                                        <tr><td className="border border-gray-200 px-3 py-2 font-semibold">A5</td><td className="border border-gray-200 px-3 py-2 text-center">8</td><td className="border border-gray-200 px-3 py-2 text-center">8</td></tr>
+                                        <tr className="bg-gray-50"><td className="border border-gray-200 px-3 py-2 font-semibold">A6</td><td className="border border-gray-200 px-3 py-2 text-center">16</td><td className="border border-gray-200 px-3 py-2 text-center">16</td></tr>
+                                    </tbody>
+                                </table>
+                                <p className="text-xs text-gray-500 mb-4">Ces formats sont fabriqués par imposition sur des planches A2. Les quantités sont automatiquement arrondies au multiple supérieur.</p>
+                                <button onClick={() => setShowMinQtyModal(false)} className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition-colors">Compris</button>
+                            </div>
+                        </div>
+                    )}
+                    {inspectedFile && originalFile && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={handleCloseModal}>
+                            <div className="bg-white rounded-lg p-2 flex flex-col relative w-full h-full max-w-[95vw] max-h-[95vh]" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200">
+                                    <div className="flex items-center gap-4">
+                                        <h3 className="font-bold text-lg text-gray-800 truncate max-w-[300px]" title={originalFile?.name}>
+                                            Inspection: {originalFile?.name}
+                                        </h3>
+                                        <button 
+                                            onClick={handleSaveChanges} 
+                                            disabled={!previewFile}
+                                            className={`px-3 py-1 rounded font-bold text-xs transition-all flex items-center gap-1 ${previewFile ? 'bg-green-600 text-white hover:bg-green-700 shadow-md animate-pulse' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                        >
+                                            <Icons.CheckCircle /> Enregistrer modification
+                                        </button>
+                                        {saveMessage && <span className="text-green-600 font-bold text-xs animate-fade-in">{saveMessage}</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex gap-1">
+                                            <span className="text-[10px] text-white bg-fuchsia-500 px-2 py-1 rounded font-bold uppercase">Finesse &le; {finesse} mm</span>
+                                            <span className="text-[10px] text-black bg-green-400 px-2 py-1 rounded font-bold uppercase">Réserves &le; {finesse} mm</span>
+                                        </div>
+                                        <button onClick={handleCloseModal} className="bg-red-600 text-white rounded-full p-1 shadow hover:bg-red-700 transition-colors">
+                                            <Icons.X size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="bg-gray-50 p-2 rounded border border-gray-200 mb-2 flex gap-2 flex-shrink-0">
+                                    <button onClick={handleSmartCorrection} className="flex-1 py-1.5 text-white rounded font-bold text-xs shadow flex items-center justify-center gap-2 transition-colors" style={{ backgroundColor: '#FF00FF' }} onMouseOver={(e) => e.target.style.backgroundColor='#DD00DD'} onMouseOut={(e) => e.target.style.backgroundColor='#FF00FF'}> <Icons.Maximize size={14} /> Corriger Finesses (+2px) </button>
+                                    <button onClick={handleSmartCorrectionReserves} className="flex-1 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-xs shadow flex items-center justify-center gap-2 transition-colors"> <Icons.Scissors size={14} /> Corriger Réserves (Élargir) </button>
+                                </div>
+                                <div 
+                                    className="relative border border-gray-500 bg-gray-500 flex-1 overflow-hidden flex items-center justify-center cursor-none rounded shadow-inner gap-2"
+                                    ref={containerRef}
+                                    onMouseMove={handleMouseMoveLoupe}
+                                    onMouseLeave={() => setShowMagnifier(false)}
+                                >
+                                    {/* PANNEAU GAUCHE : image originale avec finesses/réserves superposées */}
+                                    <div style={{ width: '50%', height: '100%', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
+                                            <img 
+                                                ref={imgRef}
+                                                src={(previewFile || inspectedFile).src} 
+                                                alt="Original" 
+                                                style={{ 
+                                                    maxWidth: '100%', 
+                                                    maxHeight: '100%', 
+                                                    objectFit: 'contain',
+                                                    imageRendering: 'pixelated',
+                                                    position: 'relative',
+                                                    zIndex: 1
+                                                }} 
+                                            />
+                                            {(previewFile || inspectedFile).defectsSrc && (
+                                                <img 
+                                                    src={(previewFile || inspectedFile).defectsSrc} 
+                                                    alt="Finesses overlay" 
+                                                    style={{ 
+                                                        position: 'absolute',
+                                                        top: 0, left: 0,
+                                                        width: '100%',
+                                                        height: '100%',
+                                                        objectFit: 'contain',
+                                                        imageRendering: 'pixelated',
+                                                        zIndex: 2
+                                                    }} 
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+                                    {/* BOUTON AIDE AU CENTRE */}
+                                    <button 
+                                        onClick={() => setShowHelpModal(true)} 
+                                        style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 20 }}
+                                        className="bg-white/20 hover:bg-white/40 text-white rounded-full p-3 shadow-lg transition-all border-2 border-white/50"
+                                    >
+                                        <Icons.HelpCircle size={60}/>
+                                    </button>
+                                    {/* PANNEAU DROIT : finesses/réserves seules sur fond gris */}
+                                    <div style={{ width: '50%', height: '100%', backgroundColor: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        {(previewFile || inspectedFile).pureDefectsSrc && (
+                                            <img 
+                                                ref={imgRightRef}
+                                                src={(previewFile || inspectedFile).pureDefectsSrc} 
+                                                alt="Analyse" 
+                                                style={{ 
+                                                    maxWidth: '100%', 
+                                                    maxHeight: '100%', 
+                                                    objectFit: 'contain',
+                                                    imageRendering: 'pixelated'
+                                                }} 
+                                            />
+                                        )}
+                                    </div>
+                                    {showMagnifier && !isAnalyzing && (
+                                        <div 
+                                            style={{
+                                                position: 'fixed',
+                                                left: magnifierPos.clientX - 75,
+                                                top: magnifierPos.clientY - 75,
+                                                width: '150px',
+                                                height: '150px',
+                                                border: '2px solid white',
+                                                borderRadius: '50%',
+                                                boxShadow: '0 0 15px rgba(0,0,0,0.6)',
+                                                backgroundColor: '#6b7280', 
+                                                backgroundImage: `url(${magnifierPos.src || inspectedFile.defectsSrc})`,
+                                                backgroundRepeat: 'no-repeat',
+                                                backgroundSize: `${magnifierPos.bgW}px ${magnifierPos.bgH}px`,
+                                                backgroundPosition: `${-magnifierPos.bgX}px ${-magnifierPos.bgY}px`,
+                                                pointerEvents: 'none',
+                                                zIndex: 100
+                                            }}
+                                        />
+                                    )}
+                                    {isAnalyzing && (
+                                        <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
+                                            <div className="animate-spin-slow text-blue-600 mb-4">
+                                                <Icons.Loader size={48} />
+                                            </div>
+                                            <p className="text-lg font-bold text-gray-800 animate-pulse">
+                                                Patience....fichier en cours de modification
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center justify-center gap-4 mt-2 flex-shrink-0">
+                                    <p className="text-xs text-gray-500 italic">
+                                        <span className="font-bold text-gray-800 not-italic">Mode Loupe :</span> Survolez l'image pour agrandir les détails (x3).
+                                    </p>
+                                    <button onClick={() => setShowHelpModal(true)} className="text-gray-400 hover:text-blue-600 transition-colors flex-shrink-0"><Icons.HelpCircle size={28}/></button>
+                                </div>
+                            </div>
+                            {showUnsavedDialog && (
+                                <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+                                    <div className="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full text-center border-2 border-orange-500 animate-bounce-in">
+                                        <div className="text-orange-500 mb-4 flex justify-center"><Icons.AlertTriangle size={48} /></div>
+                                        <h4 className="text-xl font-bold text-gray-800 mb-2">Modifications non enregistrées</h4>
+                                        <p className="text-sm text-gray-600 mb-6">Vous avez modifié ce dessin. Voulez-vous sauvegarder les changements avant de quitter ?</p>
+                                        <div className="flex flex-col gap-2">
+                                            <button onClick={confirmSave} className="w-full py-2 bg-green-600 hover:bg-green-700 text-white rounded font-bold transition-colors">Oui, sauvegarder</button>
+                                            <button onClick={confirmDiscard} className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold transition-colors">Non, quitter sans sauver</button>
+                                            <button onClick={cancelClose} className="w-full py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded font-bold transition-colors">Annuler</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    <aside className="w-[420px] bg-white border-r border-gray-300 flex flex-col shadow-lg z-10 flex-shrink-0">
+                        <div className="p-4 bg-green-700 text-white text-center flex-shrink-0">
+                            <h1 className="text-lg font-bold uppercase tracking-wider">Montage Automatique</h1>
+                            <h2 className="text-xl font-bold text-white mt-1">by Printmytransfer</h2>
+                        </div>
+                        {(isAnalyzing || isCalculating) && !inspectModalFileId && ( <div className="absolute inset-0 bg-white/80 z-30 flex flex-col items-center justify-center text-center backdrop-blur-sm rounded-lg"> <div className="animate-spin-slow text-green-600 mb-2"><Icons.Loader size={32}/></div> <p className="text-xs font-bold text-green-700 uppercase animate-pulse">TRAITEMENT EN COURS...</p> </div> )}
+                        <div className="flex-shrink-0 max-h-[40vh] overflow-y-auto border-b border-gray-200 bg-white custom-scrollbar relative">
+                            <div className="p-3 space-y-2">
+                                <div className="space-y-1">
+                                    <label className="block text-gray-800 font-semibold uppercase text-[10px]">Dimension de la feuille (mm)</label>
+                                    <div className="flex gap-2">
+                                        <select onChange={handlePresetChange} defaultValue="A2" className="border border-gray-300 rounded px-1 text-xs bg-white focus:border-blue-500 outline-none font-bold h-7"> <option value="1M">1M</option> <option value="A2">A2</option> <option value="A3">A3</option> <option value="A4">A4</option> <option value="A5">A5</option> <option value="A6">A6</option> </select>
+                                        <div className="relative flex-1"><span className="absolute left-2 top-1.5 text-gray-500 text-[9px]">L</span><input type="text" value={sheetSize.w} onChange={(e) => setSheetSize({...sheetSize, w: e.target.value})} className="w-full pl-5 pr-2 py-1 h-7 text-xs border border-gray-300 rounded focus:border-blue-500 focus:outline-none" /></div>
+                                        <div className="relative flex-1"><span className="absolute left-2 top-1.5 text-gray-500 text-[9px]">H</span><input type="text" value={sheetSize.h} onChange={(e) => setSheetSize({...sheetSize, h: e.target.value})} className="w-full pl-5 pr-2 py-1 h-7 text-xs border border-gray-300 rounded focus:border-blue-500 focus:outline-none" /></div>
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex justify-between"><label className="block text-gray-800 font-semibold uppercase text-[10px]">Bordure (Marge)</label><span className="text-blue-600 font-bold text-[10px]">{margin} mm</span></div>
+                                    <input type="range" min="0" max="10" value={margin} onChange={(e) => { const v = parseInt(e.target.value); setMargin(impositionMode === 'imbrication' ? Math.max(4, v) : v); }} className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex justify-between items-center"> 
+                                        <div className="flex items-center gap-1">
+                                            <label className="block text-gray-800 font-semibold uppercase text-[10px]">Détection Finesse</label> 
+                                        </div>
+                                        <span className="text-orange-600 font-bold text-[10px]">{finesse} mm</span> 
+                                    </div>
+                                    <div className="flex gap-1 items-center"> <span className="text-[9px] font-bold text-gray-500 w-4 text-right">0.1</span> <input type="range" min="0.1" max="0.5" step="0.05" value={finesse} onChange={(e) => setFinesse(parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" /> <span className="text-[9px] font-bold text-gray-500 w-4">0.5</span> <button onClick={handleManualAnalysis} disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6 ml-1"> <Icons.Search size={10} /> Analyser </button> </div>
+                                </div>
+
+                                {/* BOUTON SIMULATION IMPRESSION */}
+                                <div className="pt-2 border-t border-gray-200">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-gray-800 font-semibold uppercase text-[10px] flex items-center gap-1">
+                                            <Icons.Eye size={12}/> Aperçu couleur d'impression
+                                        </label>
+                                        <div 
+                                            onClick={() => setSimulatePrint(!simulatePrint)}
+                                            className={`relative w-8 h-4 rounded-full cursor-pointer transition-colors ${simulatePrint ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                                        >
+                                            <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${simulatePrint ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                        </div>
+                                    </div>
+                                    <p className="text-[9px] text-gray-500 italic leading-tight">
+                                        {simulatePrint ? "simulation couleur impression" : "couleur originale du dessin"}
+                                    </p>
+                                </div>
+
+                            </div>
+                        </div>
+                        <div className="p-2 bg-gray-50 border-b border-gray-300 shadow-md z-20 flex-shrink-0 relative">
+                             <div className="flex gap-2">
+                                <button onClick={() => handleModeSelection('massicot')} className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all ${impositionMode === 'massicot' ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}><Icons.Layout /> <span className="font-bold text-[9px] mt-0.5">Massicotable</span></button>
+                                <button onClick={() => handleModeSelection('imbrique')} className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all ${impositionMode === 'imbrique' ? 'border-purple-600 bg-purple-50 text-purple-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}><Icons.Scissors /> <span className="font-bold text-[9px] mt-0.5">Non Massicotable</span></button>
+                                <button onClick={() => handleModeSelection('imbrication')} className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all ${impositionMode === 'imbrication' ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}><Icons.Puzzle /> <span className="font-bold text-[9px] mt-0.5">Imbrication</span></button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto bg-white p-3 space-y-3 relative custom-scrollbar pb-6">
+                            {files.length > 0 && (
+                                <div className="flex justify-between items-center mb-1 px-1">
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase">{files.length} Fichiers</span>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={fillPageWithImage}
+                                            disabled={files.length !== 1}
+                                            className={`text-[10px] flex items-center gap-1 font-bold transition-colors ${files.length === 1 ? 'text-blue-600 hover:text-blue-800' : 'text-gray-300 cursor-not-allowed'}`}
+                                        >
+                                            <Icons.Copy size={10} /> REMPLIR
+                                        </button>
+                                        <button onClick={removeAllFiles} className="text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1 font-bold transition-colors"><Icons.Trash size={10} /> TOUT EFFACER</button>
+                                    </div>
+                                </div>
+                            )}
+                            {files.map(file => { const fileStat = getFileStats(file.id), isComplete = fileStat && fileStat.made >= fileStat.req; return ( <div key={file.id} className={`bg-gray-50 border rounded p-2 flex gap-3 relative group hover:shadow-md transition-shadow ${isComplete ? 'border-green-200 bg-green-50' : 'border-gray-200'}`}> <div className="w-16 h-16 bg-white border border-gray-200 rounded flex items-center justify-center overflow-hidden flex-shrink-0 relative"><img src={file.src} alt="mini" className={`max-w-full max-h-full object-contain ${simulatePrint ? 'print-simulated' : ''}`} /></div> <div className="flex-1 flex flex-col justify-between"> <div className="flex justify-between items-start gap-1"> <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0"> <span className="text-xs font-bold text-gray-900 truncate" title={file.name}>{file.name}</span> {file.hasIssues && ( <button onClick={() => handleInspectClick(file.id)} className="flex-shrink-0 flex items-center gap-1 text-[9px] text-white bg-red-500 px-1.5 py-0.5 rounded border border-red-600 hover:bg-red-600 transition-colors font-bold animate-blink-fast shadow-sm"> <Icons.AlertTriangle size={10} /> Finesses et Réserves </button> )} </div> <button onClick={() => removeFile(file.id)} className="text-red-400 hover:text-red-600 flex-shrink-0 ml-1"><Icons.X size={18}/></button> </div> <div className="grid grid-cols-3 gap-1 items-end mt-2"> <div className="flex flex-col"><span className="text-[9px] text-gray-600 uppercase">Larg.</span><input type="text" className="w-full border rounded px-1 text-xs bg-gray-100 text-gray-500 h-6 cursor-not-allowed" value={file.width} readOnly /></div> <div className="flex flex-col"><span className="text-[9px] text-gray-600 uppercase">Haut.</span><input type="text" className="w-full border rounded px-1 text-xs bg-gray-100 text-gray-500 h-6 cursor-not-allowed" value={file.height} readOnly /></div> <div className="flex flex-col"><span className="text-[9px] text-gray-600 uppercase">Qté</span><div className="flex items-center border rounded bg-white h-6"><input type="number" min="0" className="w-full px-1 text-xs outline-none" value={file.quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateFileParam(file.id, 'quantity', Math.abs(parseInt(e.target.value)) || 0)}/><div className="flex flex-col border-l h-full"><button onClick={() => updateFileParam(file.id, 'quantity', parseInt(file.quantity)+1)} className="px-1 hover:bg-gray-100 text-[8px] flex-1 flex items-center"><Icons.ArrowUp/></button><button onClick={() => updateFileParam(file.id, 'quantity', Math.max(0, parseInt(file.quantity)-1))} className="px-1 hover:bg-gray-100 text-[8px] border-t flex-1 flex items-center"><Icons.ArrowDown/></button></div></div></div> </div> </div> </div> ) })}
+                        </div>
+                        <div className="p-4 border-t border-gray-200 bg-gray-50 flex-shrink-0 flex gap-2">
+                            <label className="flex-1 h-[60px] flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-white hover:border-blue-400 transition-colors bg-white shadow-sm"> <Icons.Upload /> <span className="text-gray-700 font-medium text-xs mt-1">Fichiers (PNG/PDF)</span> <input type="file" className="hidden" multiple accept="image/png, application/pdf" onChange={handleFileUpload} /> </label>
+                            <button onClick={() => launchImposition(true)} disabled={files.length === 0 || isCalculating} className={`flex-1 h-[60px] flex flex-col items-center justify-center border-2 rounded-lg transition-all ${files.length > 0 ? 'bg-green-600 border-green-700 text-white hover:bg-green-700 shadow-md transform hover:scale-[1.02]' : 'bg-gray-200 border-gray-300 text-gray-400 cursor-not-allowed'}`}> <Icons.Refresh /> <span className="font-bold text-xs mt-1">{isCalculating ? 'Calcul...' : 'Monter'}</span> </button>
+                        </div>
+                    </aside>
+                    <main className="flex-1 flex flex-col h-full overflow-hidden">
+                        <div className="h-[220px] bg-white border-b border-gray-300 flex shadow-sm z-10">
+
+                            {/* ── COLONNE 1 : Tirage + exports ── */}
+                            <div className="w-[180px] border-r border-gray-200 flex flex-col items-center justify-center p-3 bg-gray-50 flex-shrink-0">
+                                <a href="/" className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded shadow transition-colors no-underline text-center block">Accueil</a>
+                                <div className="flex items-baseline gap-1 mt-0.5">
+                                    <span className="text-4xl font-bold text-blue-600">{prix ? prix.nb : stats.totalSheets}</span>
+                                    <span className="text-xs text-gray-500">exemplaires</span>
+                                </div>
+                                {prix && prix.nb > stats.totalSheets && (
+                                    <span className="text-[9px] text-orange-600 font-medium">({stats.totalSheets} → {prix.nb}, multiple de {FORMAT_MULTIPLES[prix.format]})</span>
+                                )}
+                                {getCurrentFormat() && <span className="mt-0.5 text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">{getCurrentFormat()}</span>}
+                                <div className="flex flex-col gap-1.5 mt-2 w-full">
+                                    <div className="flex gap-1">
+                                        <button onClick={() => handleExportPDF('dessin')} disabled={sheets.length === 0} className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}><Icons.Layout size={10}/> Dessin</button>
+                                        <button onClick={() => handleExportCut()} disabled={sheets.length === 0} className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}><Icons.Scissors size={10}/> Coupe</button>
+                                    </div>
+                                    <button onClick={() => handleExportComposite()} disabled={sheets.length === 0} className={`w-full py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-gray-700 text-white hover:bg-gray-800' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}><Icons.Layers size={10}/> Composite</button>
+                                </div>
+                            </div>
+
+                            {/* ── COLONNE 2 : Panneau Prix ── */}
+                            <div className="w-[310px] flex-shrink-0 border-r border-gray-200 bg-white p-3 flex flex-col justify-between overflow-hidden">
+                                <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">💶 Devis</div>
+                                {!prix ? (
+                                    <div className="flex-1 flex items-center justify-center text-[10px] text-gray-400 italic text-center px-2">
+                                        {stats.totalSheets === 0 ? 'Lancez le montage pour calculer le prix' : 'Format non reconnu — sélectionnez un preset (1M, A2…A6)'}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-0.5 text-[10px] flex-1">
+                                        <div className="flex justify-between text-gray-600">
+                                            <span>{prix.nb} exemplaires {prix.format} × {formatEur(prix.pu)}</span>
+                                            <span className="font-semibold">{formatEur(prix.totalCatalogue)}</span>
+                                        </div>
+                                        {prix.clientRemise > 0 && (
+                                            <div className="flex justify-between text-green-700">
+                                                <span>Remise client ({prix.clientRemise}%)</span>
+                                                <span>- {formatEur(prix.remiseClientMontant)}</span>
+                                            </div>
+                                        )}
+                                        {prix.promoData && (
+                                            <div className="flex justify-between text-purple-700">
+                                                <span>Code {codePromo} ({prix.promoData.type==='pct' ? prix.promoData.valeur+'%' : formatEur(prix.promoData.valeur)})</span>
+                                                <span>- {formatEur(prix.remisePromoMontant)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between font-bold text-[13px] text-blue-700 border-t border-gray-100 pt-1 mt-0.5">
+                                            <span>Total HT</span><span>{formatEur(prix.totalHT)}</span>
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Code promo */}
+                                <div className="mt-1.5 flex gap-1">
+                                    <input
+                                        type="text" placeholder="Code promo"
+                                        value={codePromoInput} onChange={e => setCodePromoInput(e.target.value)}
+                                        onKeyDown={e => e.key==='Enter' && handleVerifyPromo()}
+                                        className="flex-1 border border-gray-300 rounded px-2 text-[10px] h-6 focus:outline-none focus:border-purple-400"
+                                    />
+                                    <button onClick={handleVerifyPromo} className="px-2 h-6 bg-purple-600 hover:bg-purple-700 text-white rounded text-[9px] font-bold transition-colors">OK</button>
+                                    {promoData && <button onClick={() => {setPromoData(null);setCodePromo('');setCodePromoInput('');}} className="px-1.5 h-6 bg-gray-200 hover:bg-gray-300 rounded text-[9px] font-bold text-gray-600">✕</button>}
+                                </div>
+                                {promoError && <p className="text-[9px] text-red-500 mt-0.5">{promoError}</p>}
+                                {promoData && <p className="text-[9px] text-green-600 mt-0.5">✓ {promoData.label}</p>}
+                            </div>
+
+                            {/* ── COLONNE 3 : Bouton Panier + détails fichiers ── */}
+                            <div className="flex-1 flex flex-col overflow-hidden">
+                                {/* Boutons panier */}
+                                <div className="px-3 pt-2 pb-1.5 border-b border-gray-100 flex-shrink-0">
+                                    {!orderAdded ? (
+                                        <div className="flex flex-col gap-1.5">
+                                            <button
+                                                onClick={handleAddToCart}
+                                                disabled={!prix || sheets.length === 0 || isAddingToCart}
+                                                className={`w-full h-9 rounded-lg flex items-center justify-center gap-2 font-bold text-sm transition-all shadow ${prix && sheets.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                            >
+                                                {isAddingToCart
+                                                    ? <><span className="animate-spin-slow inline-block">⟳</span> Génération...</>
+                                                    : <>🛒 Ajouter au panier {prix ? `— ${formatEur(prix.totalHT)} HT` : ''}</>
+                                                }
+                                            </button>
+                                            {pendingOrders.length > 0 && (
+                                                <button
+                                                    onClick={handleGoToCart}
+                                                    disabled={isAddingToCart}
+                                                    className="w-full h-9 rounded-lg flex items-center justify-center gap-1 font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-all shadow disabled:opacity-50"
+                                                >
+                                                    🛒 Aller au panier ({pendingOrders.length})
+                                                </button>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="flex gap-1.5">
+                                            <button
+                                                onClick={handleAutreMontage}
+                                                className="flex-1 h-9 rounded-lg flex items-center justify-center gap-1 font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-all shadow"
+                                            >
+                                                ➕ Autre montage
+                                            </button>
+                                            <button
+                                                onClick={handleGoToCart}
+                                                disabled={isAddingToCart}
+                                                className="flex-1 h-9 rounded-lg flex items-center justify-center gap-1 font-bold text-sm bg-green-600 hover:bg-green-700 text-white transition-all shadow disabled:opacity-50"
+                                            >
+                                                {isAddingToCart ? <><span className="animate-spin-slow inline-block">⟳</span> Envoi...</> : <>🛒 Aller au panier ({pendingOrders.length})</>}
+                                            </button>
+                                        </div>
+                                    )}
+                                    {cartMessage && <p className={`text-[10px] mt-1 text-center font-bold ${cartMessage.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{cartMessage}</p>}
+                                </div>
+                                {/* Détails fichiers */}
+                                <div className="flex-1 p-2 overflow-hidden">
+                                    <div className="grid grid-cols-3 gap-1.5 overflow-y-auto h-full content-start pr-0.5">
+                                        {stats.details.map((item, idx) => (
+                                            <div key={idx} className={`bg-white border rounded p-1.5 flex gap-1.5 shadow-sm h-[52px] items-center ${item.made >= item.req ? 'border-green-200' : 'border-gray-200'}`}>
+                                                <div className="w-8 h-8 bg-gray-100 border rounded overflow-hidden flex-shrink-0"><img src={item.src} className="w-full h-full object-contain"/></div>
+                                                <div className="flex-1 flex flex-col justify-center min-w-0">
+                                                    <div className="text-[9px] font-bold truncate text-gray-900" title={item.name}>{item.name}</div>
+                                                    <div className="text-[8px] text-gray-600 flex justify-between"><span>{item.req} cmd</span><span className="font-bold">{item.made} fab</span></div>
+                                                    <div className="w-full bg-gray-200 rounded-full h-0.5 mt-0.5"><div className={`h-0.5 rounded-full ${item.made >= item.req ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100,(item.made/item.req)*100)}%` }}></div></div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div 
+                            className="flex-1 bg-gray-200 overflow-hidden relative flex flex-col"
+                        >
+                            {!hasCalculated && sheets.length === 0 && (<div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 pointer-events-none px-8">
+                                <div className="opacity-20 transform scale-150 mb-4"><Icons.Play /></div>
+                                <p className="font-semibold text-sm mb-4">Chargez des fichiers et cliquez sur "Monter"</p>
+                                <div className="bg-white/80 rounded-xl shadow-sm border border-gray-200 p-6 max-w-xl text-left text-[13px] leading-relaxed space-y-5">
+                                    <div>
+                                        <p className="font-bold text-gray-700 text-sm mb-1.5">📐 Réglage de la bordure :</p>
+                                        <p className="text-gray-600">La bordure est réglée à <strong>0 par défaut</strong>.<br/>
+                                        Si vos dessins n'intègrent pas une bordure autour pour la découpe (mini ~5mm) et que vous faites un montage de plus de 1 transfert, veuillez donner une valeur à la bordure pour permettre la découpe (~5mm mini).</p>
+                                    </div>
+                                    <div>
+                                        <p className="font-bold text-gray-700 text-sm mb-1.5">🔍 Détection des finesses et réserves :</p>
+                                        <p className="text-gray-600">Cliquez sur le bouton <strong>"Analyser"</strong> pour voir les dessins "critiques".<br/>
+                                        Si un bouton apparaît à côté de la référence d'un transfert, cliquez dessus pour visualiser et faire des corrections des finesses et réserves détectées.</p>
+                                    </div>
+                                </div>
+                            </div>)}
+                            
+                            {(hasCalculated || sheets.length > 0) && (
+                                <div className="w-full flex justify-center border-b border-gray-300 bg-gray-200 pt-2 z-20 flex-shrink-0">
+                                    <div className="flex gap-1">
+                                        <TabButton id="standard" label="Mode 1" icon={Icons.Grid} />
+                                        <TabButton id="compact" label="Mode 2" icon={Icons.Maximize} />
+                                        <TabButton id="grouped" label="Mode 3" icon={Icons.Layers} />
+                                        <TabButton id="norotate" label="Mode 4" icon={Icons.Ban} />
+                                        <TabButton id="manual" label="Manuel" icon={Icons.Hand} />
+                                    </div>
+                                </div>
+                            )}
+                            
+                            <div className="flex-1 relative w-full overflow-hidden">
+                                {errors.length > 0 && ( 
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 z-30 p-4 text-center backdrop-blur-sm"> 
+                                        <div className="text-red-500 mb-3"><Icons.AlertTriangle size={48} /></div> 
+                                        <h3 className="text-xl font-bold text-gray-800 mb-2">Attention</h3> 
+                                        {errors.map((err, i) => <p key={i} className="text-red-600 font-medium mb-1">{err}</p>)} 
+                                        <button onClick={() => setErrors([])} className="mt-6 px-6 py-2 bg-gray-200 hover:bg-gray-300 rounded-full text-gray-800 font-bold transition-colors">Fermer</button> 
+                                    </div> 
+                                )}
+
+                                <div 
+                                    ref={viewContainerRef}
+                                    className="w-full h-full flex items-center justify-center p-4"
+                                >
+                                    {sheets.map((sheet, idx) => ( 
+                                        <div key={idx} className="flex flex-col items-center justify-center transition-all duration-300 ease-out" style={{ transform: `scale(${scaleFactor})`, transformOrigin: 'center center' }}> 
+                                            <div className="relative bg-white shadow-xl flex-shrink-0" style={{ width: `${sheetSize.w}px`, height: `${sheetSize.h}px` }}> 
+                                                <div className="w-full h-full relative overflow-hidden border border-gray-300"> 
+                                                    {impositionMode === 'massicot' && ( <CutLinesOverlay items={sheet.items} width={sheetSize.w} height={sheetSize.h} /> )} 
+                                                    {sheet.items.map((item) => ( 
+                                                        <div key={item.uuid} onMouseDown={(e) => handleMouseDown(e, item)} onDoubleClick={(e) => handleDoubleClick(e, item)} className={`absolute flex items-center justify-center overflow-hidden hover:opacity-80 transition-opacity ${activeTab === 'manual' ? 'cursor-grab active:cursor-grabbing' : ''}`} style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.w}px`, height: `${item.h}px`, zIndex: 10 }}> 
+                                                            <div className="w-full h-full relative flex items-center justify-center"> 
+                                                                <div className={`flex items-center justify-center relative ${impositionMode === 'imbrique' ? 'border border-blue-300 border-dashed' : ''}`} style={{ width: `${item.rotated ? item.realH + (margin*2) : item.realW + (margin*2)}px`, height: `${item.rotated ? item.realW + (margin*2) : item.realH + (margin*2)}px` }}> 
+                                                                    {impositionMode === 'massicot' && ( <div className="absolute inset-0 border border-red-600 z-0 pointer-events-none"></div> )} 
+                                                                    <img 
+                                                                        src={item.src} 
+                                                                        alt="transfert" 
+                                                                        className={`relative z-10 ${impositionMode === 'imbrication' ? '' : 'bg-blue-100'} ${simulatePrint ? 'print-simulated' : ''}`} 
+                                                                        style={{ 
+                                                                            width: `${item.realW}px`, 
+                                                                            height: `${item.realH}px`, 
+                                                                            maxWidth: 'none', 
+                                                                            maxHeight: 'none', 
+                                                                            objectFit: 'fill', 
+                                                                            transform: item.rotated ? 'rotate(90deg)' : 'none', 
+                                                                            filter: impositionMode === 'imbrication' ? 'url(#outline-effect)' : undefined
+                                                                        }} 
+                                                                    /> 
+                                                                </div> 
+                                                            </div> 
+                                                        </div> 
+                                                    ))} 
+                                                </div> 
+                                            </div> 
+                                            {activeTab === 'manual' && ( <p className="text-[10px] text-gray-500 mt-2 italic font-medium" style={{ transform: `scale(${1/scaleFactor})` }}>Mode Manuel : Double-cliquez sur une forme pour la faire pivoter de 90°.</p> )} 
+                                        </div> 
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
