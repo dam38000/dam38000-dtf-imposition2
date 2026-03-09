@@ -19,6 +19,7 @@ export default function App() {
   const [dragState, setDragState] = useState(null);
   const [manualSheets, setManualSheets] = useState(null);
   const [stats, setStats] = useState({ totalSheets: 0, details: [] });
+  const [isExporting, setIsExporting] = useState(false);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
@@ -93,6 +94,62 @@ export default function App() {
       await runImposition(null, updatedFiles);
     }
   }, [runImposition]);
+
+  const buildExportItems = useCallback(() => {
+    if (sheets.length === 0 || !sheets[0].items) return null;
+    return sheets[0].items.map(item => ({
+      file_id: item.fileId,
+      x: item.x,
+      y: item.y,
+      realW: item.realW,
+      realH: item.realH,
+      rotated: item.rotated || false,
+    }));
+  }, [sheets]);
+
+  const handleExport = useCallback(async (type) => {
+    const exportItems = buildExportItems();
+    if (!exportItems) return;
+
+    setIsExporting(type);
+    try {
+      const body = {
+        sheet_size: { w: parseFloat(stateRef.current.sheetSize.w), h: parseFloat(stateRef.current.sheetSize.h) },
+        items: exportItems,
+      };
+      if (type === 'coupe' || type === 'composite') {
+        body.margin = parseFloat(stateRef.current.margin) || 0;
+        body.mode = stateRef.current.impositionMode;
+      }
+
+      const res = await fetch(`/api/export/${type}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || `Erreur export ${type}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = type === 'dessin' ? 'dessin_300dpi.png' : type === 'coupe' ? 'coupe.pdf' : 'composite.pdf';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setErrors(prev => [...prev, err.message]);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [buildExportItems]);
+
+  const handleExportDessin = useCallback(() => handleExport('dessin'), [handleExport]);
+  const handleExportCoupe = useCallback(() => handleExport('coupe'), [handleExport]);
+  const handleExportComposite = useCallback(() => handleExport('composite'), [handleExport]);
 
   const handleUpload = async (selectedFiles) => {
     setIsAnalyzing(true);
@@ -172,6 +229,10 @@ export default function App() {
         simulatePrint={simulatePrint}
         dragState={dragState}
         setDragState={setDragState}
+        onExportDessin={handleExportDessin}
+        onExportCoupe={handleExportCoupe}
+        onExportComposite={handleExportComposite}
+        isExporting={isExporting}
       />
     </div>
   );

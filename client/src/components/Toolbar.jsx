@@ -9,9 +9,10 @@ const PRESETS_MAP = {
   '132x100': 'A6', '100x132': 'A6',
 };
 
-export default function Toolbar({ sheetSize, sheets, stats }) {
+export default function Toolbar({ sheetSize, sheets, stats, onExportDessin, onExportCoupe, onExportComposite, isExporting }) {
   const formatKey = `${parseInt(sheetSize.w)}x${parseInt(sheetSize.h)}`;
   const currentFormat = PRESETS_MAP[formatKey] || null;
+  const canExport = sheets.length > 0 && !isExporting;
 
   return (
     <div className="h-[220px] bg-white border-b border-gray-300 flex shadow-sm z-10">
@@ -25,15 +26,27 @@ export default function Toolbar({ sheetSize, sheets, stats }) {
         {currentFormat && <span className="mt-0.5 text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">{currentFormat}</span>}
         <div className="flex flex-col gap-1.5 mt-2 w-full">
           <div className="flex gap-1">
-            <button disabled className="flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] bg-gray-200 text-gray-400 cursor-not-allowed">
-              <Icons.Layout size={10}/> Dessin
+            <button
+              onClick={onExportDessin}
+              disabled={!canExport}
+              className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-colors ${canExport ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+            >
+              {isExporting === 'dessin' ? <Icons.Loader size={10} className="animate-spin" /> : <Icons.Layout size={10}/>} Dessin
             </button>
-            <button disabled className="flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] bg-gray-200 text-gray-400 cursor-not-allowed">
-              <Icons.Scissors size={10}/> Coupe
+            <button
+              onClick={onExportCoupe}
+              disabled={!canExport}
+              className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-colors ${canExport ? 'bg-red-600 hover:bg-red-700 text-white shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+            >
+              {isExporting === 'coupe' ? <Icons.Loader size={10} className="animate-spin" /> : <Icons.Scissors size={10}/>} Coupe
             </button>
           </div>
-          <button disabled className="w-full py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] bg-gray-200 text-gray-400 cursor-not-allowed">
-            <Icons.Layers size={10}/> Composite
+          <button
+            onClick={onExportComposite}
+            disabled={!canExport}
+            className={`w-full py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-colors ${canExport ? 'bg-gray-700 hover:bg-gray-800 text-white shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+          >
+            {isExporting === 'composite' ? <Icons.Loader size={10} className="animate-spin" /> : <Icons.Layers size={10}/>} Composite
           </button>
         </div>
       </div>
