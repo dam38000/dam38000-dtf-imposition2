@@ -20,6 +20,8 @@ export default function App() {
   const [manualSheets, setManualSheets] = useState(null);
   const [stats, setStats] = useState({ totalSheets: 0, details: [] });
   const [isExporting, setIsExporting] = useState(false);
+  const [finesseResults, setFinesseResults] = useState({});
+  const [inspectFinesseId, setInspectFinesseId] = useState(null);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
@@ -151,6 +153,32 @@ export default function App() {
   const handleExportCoupe = useCallback(() => handleExport('coupe'), [handleExport]);
   const handleExportComposite = useCallback(() => handleExport('composite'), [handleExport]);
 
+  const handleAnalyze = useCallback(async () => {
+    const currentFiles = stateRef.current.files;
+    if (currentFiles.length === 0) return;
+    setIsAnalyzing(true);
+    try {
+      const results = {};
+      for (const f of currentFiles) {
+        try {
+          const res = await fetch('/api/analyze/finesses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: f.id, threshold_mm: finesse }),
+          });
+          if (res.ok) {
+            results[f.id] = await res.json();
+          }
+        } catch (err) {
+          console.error(`Erreur analyse ${f.id}:`, err);
+        }
+      }
+      setFinesseResults(results);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [finesse]);
+
   const handleUpload = async (selectedFiles) => {
     setIsAnalyzing(true);
     setErrors([]);
@@ -213,6 +241,9 @@ export default function App() {
         onUpload={handleUpload}
         onMount={handleMount}
         onFillPage={handleFillPage}
+        onAnalyze={handleAnalyze}
+        finesseResults={finesseResults}
+        onInspectFinesse={setInspectFinesseId}
       />
       <MainArea
         sheetSize={sheetSize}
@@ -234,6 +265,37 @@ export default function App() {
         onExportComposite={handleExportComposite}
         isExporting={isExporting}
       />
+      {/* Modale inspection finesses */}
+      {inspectFinesseId && finesseResults[inspectFinesseId] && (() => {
+        const file = files.find(f => f.id === inspectFinesseId);
+        const result = finesseResults[inspectFinesseId];
+        if (!file) return null;
+        return (
+          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-8" onClick={() => setInspectFinesseId(null)}>
+            <div className="bg-white rounded-xl shadow-2xl max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center px-5 py-3 border-b bg-red-50">
+                <div>
+                  <h3 className="font-bold text-red-700 text-sm">⚠ Finesses et Réserves — {file.name}</h3>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    Seuil : {result.threshold_mm} mm ({result.radius_px} px) — {result.finesses_percent}% de la surface affectée
+                  </p>
+                </div>
+                <button onClick={() => setInspectFinesseId(null)} className="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none">&times;</button>
+              </div>
+              <div className="flex-1 overflow-auto p-5 bg-gray-100 flex items-center justify-center" style={{ backgroundImage: 'repeating-conic-gradient(#d1d5db 0% 25%, transparent 0% 50%)', backgroundSize: '20px 20px' }}>
+                <div className="relative inline-block">
+                  <img src={`/uploads/${file.id}/converted.png`} alt="design" className="max-h-[70vh] max-w-full object-contain" />
+                  <img src={result.finesses_overlay_url} alt="finesses" className="absolute inset-0 w-full h-full object-contain opacity-80" />
+                </div>
+              </div>
+              <div className="px-5 py-3 border-t bg-gray-50 flex justify-between items-center">
+                <p className="text-[11px] text-gray-500">Les zones <span className="text-red-600 font-bold">rouges</span> indiquent les détails plus fins que {result.threshold_mm} mm qui risquent de mal s'imprimer.</p>
+                <button onClick={() => setInspectFinesseId(null)} className="px-4 py-1.5 bg-gray-700 text-white rounded font-bold text-xs hover:bg-gray-800">Fermer</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
