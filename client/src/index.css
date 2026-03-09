@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  background-color: #f3f4f6;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.animate-spin-slow { animation: spin-slow 2s linear infinite; }
+
+@keyframes blink-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.animate-blink-fast { animation: blink-fast 0.8s ease-in-out infinite; }
+
+.print-simulated { filter: saturate(0.75) brightness(0.95); }
