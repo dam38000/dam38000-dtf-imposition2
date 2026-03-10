@@ -22,6 +22,10 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [finesseResults, setFinesseResults] = useState({});
   const [inspectFinesseId, setInspectFinesseId] = useState(null);
+  const [correctedPreview, setCorrectedPreview] = useState(null);
+  const [isCorrecting, setIsCorrecting] = useState(false);
+  const [saveMessage, setSaveMessage] = useState(null);
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
@@ -179,6 +183,123 @@ export default function App() {
     }
   }, [finesse]);
 
+  // === Handlers correction finesses/réserves ===
+  const handleCorrectFinesses = useCallback(async (fileId) => {
+    setIsCorrecting(true);
+    try {
+      const res = await fetch('/api/analyze/correct-finesses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_id: fileId, threshold_mm: finesse }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        data._ts = Date.now(); // cache bust
+        setCorrectedPreview(data);
+      }
+    } catch (err) {
+      console.error('Erreur correction finesses:', err);
+    } finally {
+      setIsCorrecting(false);
+    }
+  }, [finesse]);
+
+  const handleCorrectReserves = useCallback(async (fileId) => {
+    setIsCorrecting(true);
+    try {
+      const res = await fetch('/api/analyze/correct-reserves', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_id: fileId, threshold_mm: finesse }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        data._ts = Date.now();
+        setCorrectedPreview(data);
+      }
+    } catch (err) {
+      console.error('Erreur correction réserves:', err);
+    } finally {
+      setIsCorrecting(false);
+    }
+  }, [finesse]);
+
+  const handleSaveCorrection = useCallback(async () => {
+    if (!correctedPreview || !inspectFinesseId) return;
+    try {
+      const res = await fetch('/api/analyze/save-correction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_id: inspectFinesseId }),
+      });
+      if (res.ok) {
+        // Mettre à jour les résultats finesses avec les résultats corrigés
+        setFinesseResults(prev => ({
+          ...prev,
+          [inspectFinesseId]: {
+            ...correctedPreview,
+            // Remettre les URLs de l'analyse principale (recalculer)
+            finesses_overlay_url: `/uploads/${inspectFinesseId}/finesses_overlay.png`,
+            finesses_thumb_url: `/uploads/${inspectFinesseId}/finesses_thumb.png`,
+          }
+        }));
+        // Mettre à jour la miniature du fichier
+        setFiles(prev => prev.map(f => f.id === inspectFinesseId
+          ? { ...f, thumbnailUrl: `/uploads/${f.id}/thumbnail.png?t=${Date.now()}` }
+          : f
+        ));
+        setSaveMessage('Dessin sauvegardé !');
+        setTimeout(() => setSaveMessage(null), 2000);
+        setCorrectedPreview(null);
+        // Relancer l'analyse sur l'image sauvegardée
+        try {
+          const analysisRes = await fetch('/api/analyze/finesses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: inspectFinesseId, threshold_mm: finesse }),
+          });
+          if (analysisRes.ok) {
+            const analysisData = await analysisRes.json();
+            setFinesseResults(prev => ({ ...prev, [inspectFinesseId]: analysisData }));
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.error('Erreur sauvegarde:', err);
+    }
+  }, [correctedPreview, inspectFinesseId, finesse]);
+
+  const handleCloseInspect = useCallback(() => {
+    if (correctedPreview) {
+      setShowUnsavedDialog(true);
+    } else {
+      setInspectFinesseId(null);
+      setCorrectedPreview(null);
+    }
+  }, [correctedPreview]);
+
+  const confirmSaveAndClose = useCallback(async () => {
+    await handleSaveCorrection();
+    setShowUnsavedDialog(false);
+    setInspectFinesseId(null);
+    setCorrectedPreview(null);
+  }, [handleSaveCorrection]);
+
+  const confirmDiscardAndClose = useCallback(async () => {
+    if (inspectFinesseId) {
+      try {
+        await fetch('/api/analyze/discard-correction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: inspectFinesseId }),
+        });
+      } catch {}
+    }
+    setShowUnsavedDialog(false);
+    setInspectFinesseId(null);
+    setCorrectedPreview(null);
+  }, [inspectFinesseId]);
+
   const handleUpload = async (selectedFiles) => {
     setIsAnalyzing(true);
     setErrors([]);
@@ -265,34 +386,176 @@ export default function App() {
         onExportComposite={handleExportComposite}
         isExporting={isExporting}
       />
-      {/* Modale inspection finesses */}
+      {/* Modale inspection finesses — 2 panneaux comme montage.html */}
       {inspectFinesseId && finesseResults[inspectFinesseId] && (() => {
         const file = files.find(f => f.id === inspectFinesseId);
-        const result = finesseResults[inspectFinesseId];
+        const originalResult = finesseResults[inspectFinesseId];
         if (!file) return null;
+
+        // Si correction en cours, utiliser les données corrigées
+        const result = correctedPreview || originalResult;
+        const ts = correctedPreview?._ts || Date.now();
+        const imageUrl = correctedPreview?.corrected_url
+          ? `${correctedPreview.corrected_url}?t=${ts}`
+          : `/uploads/${file.id}/converted.png?t=${ts}`;
+        const rawOverlay = correctedPreview
+          ? result.overlay_url
+          : (result.overlay_url || result.finesses_overlay_url);
+        const overlayUrl = rawOverlay ? `${rawOverlay}?t=${ts}` : null;
+        const rawPure = correctedPreview
+          ? result.pure_defects_url
+          : (result.pure_defects_url || result.overlay_url || result.finesses_overlay_url);
+        const pureDefectsUrl = rawPure ? `${rawPure}?t=${ts}` : null;
+
         return (
-          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-8" onClick={() => setInspectFinesseId(null)}>
-            <div className="bg-white rounded-xl shadow-2xl max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center px-5 py-3 border-b bg-red-50">
-                <div>
-                  <h3 className="font-bold text-red-700 text-sm">⚠ Finesses et Réserves — {file.name}</h3>
-                  <p className="text-xs text-red-600 mt-0.5">
-                    Seuil : {result.threshold_mm} mm ({result.radius_px} px) — {result.finesses_percent}% de la surface affectée
-                  </p>
+          <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center" onClick={handleCloseInspect}>
+            <div className="bg-white rounded-lg max-w-[95vw] max-h-[95vh] w-full flex flex-col shadow-2xl" onClick={e => e.stopPropagation()} style={{ maxWidth: '1400px' }}>
+
+              {/* HEADER */}
+              <div className="flex justify-between items-center px-4 py-2 border-b border-gray-200 flex-shrink-0">
+                <div className="flex items-center gap-4">
+                  <h3 className="font-bold text-sm">Inspection: {file.name}</h3>
+                  <button
+                    onClick={handleSaveCorrection}
+                    disabled={!correctedPreview}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${
+                      correctedPreview
+                        ? 'bg-green-600 hover:bg-green-700 text-white animate-pulse shadow-md'
+                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    ✓ Enregistrer modification
+                  </button>
+                  {saveMessage && <span className="text-green-600 text-xs font-bold animate-pulse">{saveMessage}</span>}
                 </div>
-                <button onClick={() => setInspectFinesseId(null)} className="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none">&times;</button>
-              </div>
-              <div className="flex-1 overflow-auto p-5 bg-gray-100 flex items-center justify-center" style={{ backgroundImage: 'repeating-conic-gradient(#d1d5db 0% 25%, transparent 0% 50%)', backgroundSize: '20px 20px' }}>
-                <div className="relative inline-block">
-                  <img src={`/uploads/${file.id}/converted.png`} alt="design" className="max-h-[70vh] max-w-full object-contain" />
-                  <img src={result.finesses_overlay_url} alt="finesses" className="absolute inset-0 w-full h-full object-contain opacity-80" />
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white bg-fuchsia-500 px-2 py-1 rounded font-bold uppercase">
+                    Finesse ≤ {finesse} mm
+                  </span>
+                  <span className="text-[10px] text-black bg-green-400 px-2 py-1 rounded font-bold uppercase">
+                    Réserves ≤ {finesse} mm
+                  </span>
+                  <button onClick={handleCloseInspect} className="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none ml-2">&times;</button>
                 </div>
               </div>
-              <div className="px-5 py-3 border-t bg-gray-50 flex justify-between items-center">
-                <p className="text-[11px] text-gray-500">Les zones <span className="text-red-600 font-bold">rouges</span> indiquent les détails plus fins que {result.threshold_mm} mm qui risquent de mal s'imprimer.</p>
-                <button onClick={() => setInspectFinesseId(null)} className="px-4 py-1.5 bg-gray-700 text-white rounded font-bold text-xs hover:bg-gray-800">Fermer</button>
+
+              {/* BOUTONS CORRECTION */}
+              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex gap-2 flex-shrink-0">
+                <button
+                  onClick={() => handleCorrectFinesses(file.id)}
+                  disabled={isCorrecting}
+                  className="flex-1 py-2.5 text-white rounded font-bold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 shadow-md disabled:opacity-50"
+                  style={{ backgroundColor: '#FF00FF' }}
+                >
+                  {isCorrecting ? '⏳' : '↗'} Corriger Finesses (auto)
+                </button>
+                <button
+                  onClick={() => handleCorrectReserves(file.id)}
+                  disabled={isCorrecting}
+                  className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
+                >
+                  {isCorrecting ? '⏳' : '✂'} Corriger Réserves (Élargir)
+                </button>
+              </div>
+
+              {/* ZONE IMAGES — 2 panneaux */}
+              <div className="flex-1 flex overflow-hidden min-h-0 relative">
+                {/* Overlay chargement */}
+                {isCorrecting && (
+                  <div className="absolute inset-0 bg-white/80 z-30 flex flex-col items-center justify-center backdrop-blur-sm">
+                    <div className="animate-spin text-4xl mb-2">⏳</div>
+                    <p className="text-xs font-bold text-gray-700 uppercase animate-pulse">Correction en cours...</p>
+                  </div>
+                )}
+
+                {/* GAUCHE : Design + overlay défauts */}
+                <div
+                  className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
+                  style={{ backgroundColor: '#4b5563', backgroundImage: 'repeating-conic-gradient(#555 0% 25%, #444 0% 50%)', backgroundSize: '20px 20px' }}
+                >
+                  <div className="relative inline-block">
+                    <img
+                      src={imageUrl}
+                      alt="design"
+                      className="max-h-[65vh] max-w-full object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                    {overlayUrl && (
+                      <img
+                        src={overlayUrl}
+                        alt="overlay défauts"
+                        className="absolute inset-0 w-full h-full object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* DROITE : Défauts purs sur fond gris */}
+                <div
+                  className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
+                  style={{ backgroundColor: '#6b7280' }}
+                >
+                  {pureDefectsUrl && (
+                    <img
+                      src={pureDefectsUrl}
+                      alt="défauts purs"
+                      className="max-h-[65vh] max-w-full object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* FOOTER — statistiques */}
+              <div className="px-4 py-2 border-t bg-gray-50 flex justify-between items-center flex-shrink-0">
+                <div className="flex gap-4 text-[11px]">
+                  <span className="text-gray-500">
+                    Seuil : <span className="font-bold">{result.threshold_mm} mm</span> ({result.radius_px} px)
+                  </span>
+                  {result.finesses_percent > 0 && (
+                    <span className="text-fuchsia-600 font-bold">
+                      Finesses : {result.finesses_percent}%
+                    </span>
+                  )}
+                  {result.reserves_percent > 0 && (
+                    <span className="text-green-600 font-bold">
+                      Réserves : {result.reserves_percent}%
+                    </span>
+                  )}
+                  {!result.has_finesses && !result.has_reserves && (
+                    <span className="text-green-600 font-bold">✓ Aucun défaut détecté</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  <span className="text-fuchsia-500 font-bold">■</span> Finesses &nbsp;
+                  <span className="text-green-500 font-bold">■</span> Réserves
+                </p>
               </div>
             </div>
+
+            {/* DIALOG modifications non sauvegardées */}
+            {showUnsavedDialog && (
+              <div className="absolute inset-0 bg-black/60 z-60 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md">
+                  <h4 className="font-bold text-sm mb-3">⚠ Modifications non sauvegardées</h4>
+                  <p className="text-xs text-gray-600 mb-4">
+                    Vous avez des corrections en attente. Que souhaitez-vous faire ?
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={confirmSaveAndClose} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-xs">
+                      Sauvegarder
+                    </button>
+                    <button onClick={confirmDiscardAndClose} className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-bold text-xs">
+                      Quitter sans sauver
+                    </button>
+                    <button onClick={() => setShowUnsavedDialog(false)} className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded font-bold text-xs">
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}

@@ -22,15 +22,15 @@ export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantit
               alt="mini"
               className={`max-w-full max-h-full object-contain ${simulatePrint ? 'print-simulated' : ''}`}
             />
-            {finesseResults[file.id]?.has_finesses && (
+            {(finesseResults[file.id]?.has_finesses || finesseResults[file.id]?.has_reserves) && (
               <img
-                src={finesseResults[file.id].finesses_thumb_url}
+                src={`${finesseResults[file.id].finesses_thumb_url}?t=${Date.now()}`}
                 alt="finesses"
                 className="absolute inset-0 w-full h-full object-contain opacity-60"
               />
             )}
             {finesseResults[file.id] && (
-              finesseResults[file.id].has_finesses ? (
+              (finesseResults[file.id].has_finesses || finesseResults[file.id].has_reserves) ? (
                 <span className="absolute top-0.5 right-0.5 bg-orange-500 text-white text-[8px] font-bold px-1 rounded shadow">
                   {finesseResults[file.id].finesses_percent}%
                 </span>
@@ -45,12 +45,12 @@ export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantit
             <div className="flex justify-between items-start gap-1">
               <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
                 <span className="text-xs font-bold text-gray-900 truncate" title={file.name}>{file.name}</span>
-                {finesseResults[file.id]?.has_finesses && (
+                {(finesseResults[file.id]?.has_finesses || finesseResults[file.id]?.has_reserves) && (
                   <button onClick={() => onInspectFinesse(file.id)} className="animate-pulse bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-md flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors">
                     ⚠ Finesses et Réserves
                   </button>
                 )}
-                {finesseResults[file.id] && !finesseResults[file.id].has_finesses && (
+                {finesseResults[file.id] && !finesseResults[file.id].has_finesses && !finesseResults[file.id].has_reserves && (
                   <span className="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">
                     ✓ OK
                   </span>
