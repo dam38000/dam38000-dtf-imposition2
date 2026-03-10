@@ -122,6 +122,7 @@ router.post('/correct-finesses', async (req, res) => {
   const convertedPath = path.join(jobDir, 'converted.png');
   const correctedPath = path.join(jobDir, 'corrected_preview.png');
   const inputPath = fs.existsSync(correctedPath) ? correctedPath : convertedPath;
+  console.log('[Correct Finesses] inputPath:', inputPath, '| exists:', fs.existsSync(inputPath));
 
   if (!fs.existsSync(inputPath)) {
     return res.status(404).json({ error: 'Fichier introuvable' });
@@ -131,7 +132,9 @@ router.post('/correct-finesses', async (req, res) => {
   const tmpFiles = [tmp('alpha'), tmp('half'), tmp('dilated'), tmp('spread')];
 
   try {
-    const radius = Math.max(1, Math.round(threshold_mm / 25.4 * 300));
+    // Correction fixe : 0.1mm par clic (indépendant du slider de détection)
+    const CORRECTION_MM = 0.1;
+    const radius = Math.max(1, Math.round(CORRECTION_MM / 25.4 * 300));
     const halfRadius = Math.max(1, Math.round(radius / 2));
 
     // 1. Alpha pleine résolution + version demi-résolution pour la morphologie
@@ -191,7 +194,9 @@ router.post('/correct-reserves', async (req, res) => {
   const tmpFiles = [tmp('alpha'), tmp('half'), tmp('opened'), tmp('closed'), tmp('protected'), tmp('reserves'), tmp('toremove'), tmp('toremove_full'), tmp('newalpha')];
 
   try {
-    const radius = Math.max(1, Math.round(threshold_mm / 25.4 * 300));
+    // Correction fixe : 0.1mm par clic (indépendant du slider de détection)
+    const CORRECTION_MM = 0.1;
+    const radius = Math.max(1, Math.round(CORRECTION_MM / 25.4 * 300));
     const halfRadius = Math.max(1, Math.round(radius / 2));
 
     // 1. Alpha full res + resize 50% pour morphologie rapide

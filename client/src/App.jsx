@@ -496,31 +496,48 @@ export default function App() {
                         style={{ imageRendering: 'pixelated' }}
                       />
                     )}
-                    {loupe && loupe.panel === 'left' && (
-                      <div style={{
-                        position: 'absolute', left: loupe.x - 90, top: loupe.y - 90,
-                        width: 180, height: 180, borderRadius: '50%',
-                        border: '3px solid rgba(255,255,255,0.8)',
-                        boxShadow: '0 0 12px rgba(0,0,0,0.5)',
-                        pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
-                        backgroundColor: '#4b5563',
-                      }}>
+                    {loupe && loupe.panel === 'left' && (() => {
+                      const zoom = 10;
+                      const size = 180;
+                      const half = size / 2;
+                      const pxPerMm = (300 / 25.4) * zoom; // px par mm dans la loupe
+                      const step = pxPerMm * 0.125 * 0.6; // graduation × 0.6 — noté 0.5mm
+                      const circles = [];
+                      for (let r = step; r <= half; r += step) {
+                        circles.push(r);
+                      }
+                      return (
                         <div style={{
-                          position: 'absolute', inset: 0,
-                          backgroundImage: `url(${imageUrl})`,
-                          backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
-                          backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
-                          backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
-                        }} />
-                        {overlayUrl && <div style={{
-                          position: 'absolute', inset: 0,
-                          backgroundImage: `url(${overlayUrl})`,
-                          backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
-                          backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
-                          backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
-                        }} />}
-                      </div>
-                    )}
+                          position: 'absolute', left: loupe.x - half, top: loupe.y - half,
+                          width: size, height: size, borderRadius: '50%',
+                          border: '3px solid rgba(0,0,0,0.3)',
+                          boxShadow: '0 0 12px rgba(0,0,0,0.5)',
+                          pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
+                          backgroundColor: '#ffffff',
+                        }}>
+                          <div style={{
+                            position: 'absolute', inset: 0,
+                            backgroundImage: `url(${imageUrl})`,
+                            backgroundSize: `${loupe.w * zoom}px ${loupe.h * zoom}px`,
+                            backgroundPosition: `${-loupe.x * zoom + half}px ${-loupe.y * zoom + half}px`,
+                            backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
+                          }} />
+                          <svg style={{ position: 'absolute', inset: 0, width: size, height: size }}>
+                            {circles.map((r, i) => (
+                              <circle key={i} cx={half} cy={half} r={r}
+                                fill="none" stroke="rgba(0,0,0,0.35)"
+                                strokeWidth={Math.round(r / step) % 2 === 0 ? 1 : 0.5}
+                              />
+                            ))}
+                            <circle cx={half} cy={half} r={2} fill="rgba(255,0,0,0.7)" />
+                            <line x1={half - 6} y1={half} x2={half + 6} y2={half} stroke="rgba(255,0,0,0.5)" strokeWidth={0.5} />
+                            <line x1={half} y1={half - 6} x2={half} y2={half + 6} stroke="rgba(255,0,0,0.5)" strokeWidth={0.5} />
+                            <text x={half + step * 2.5} y={half - step - 2} fontSize="11" fontWeight="bold" fill="#fff" stroke="#fff" strokeWidth={3} textAnchor="middle" paintOrder="stroke">0.5mm</text>
+                            <text x={half + step * 2.5} y={half - step - 2} fontSize="11" fontWeight="bold" fill="#000" textAnchor="middle">0.5mm</text>
+                          </svg>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
