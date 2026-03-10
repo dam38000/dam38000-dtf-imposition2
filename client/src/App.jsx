@@ -26,6 +26,7 @@ export default function App() {
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [saveMessage, setSaveMessage] = useState(null);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [loupe, setLoupe] = useState(null);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
@@ -473,7 +474,14 @@ export default function App() {
                   className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
                   style={{ backgroundColor: '#4b5563', backgroundImage: 'repeating-conic-gradient(#555 0% 25%, #444 0% 50%)', backgroundSize: '20px 20px' }}
                 >
-                  <div className="relative inline-block">
+                  <div
+                    className="relative inline-block cursor-crosshair"
+                    onMouseMove={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setLoupe({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height, panel: 'left' });
+                    }}
+                    onMouseLeave={() => setLoupe(null)}
+                  >
                     <img
                       src={imageUrl}
                       alt="design"
@@ -488,6 +496,31 @@ export default function App() {
                         style={{ imageRendering: 'pixelated' }}
                       />
                     )}
+                    {loupe && loupe.panel === 'left' && (
+                      <div style={{
+                        position: 'absolute', left: loupe.x - 90, top: loupe.y - 90,
+                        width: 180, height: 180, borderRadius: '50%',
+                        border: '3px solid rgba(255,255,255,0.8)',
+                        boxShadow: '0 0 12px rgba(0,0,0,0.5)',
+                        pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
+                        backgroundColor: '#4b5563',
+                      }}>
+                        <div style={{
+                          position: 'absolute', inset: 0,
+                          backgroundImage: `url(${imageUrl})`,
+                          backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
+                          backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
+                          backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
+                        }} />
+                        {overlayUrl && <div style={{
+                          position: 'absolute', inset: 0,
+                          backgroundImage: `url(${overlayUrl})`,
+                          backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
+                          backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
+                          backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
+                        }} />}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -497,12 +530,39 @@ export default function App() {
                   style={{ backgroundColor: '#6b7280' }}
                 >
                   {pureDefectsUrl && (
-                    <img
-                      src={pureDefectsUrl}
-                      alt="défauts purs"
-                      className="max-h-[65vh] max-w-full object-contain"
-                      style={{ imageRendering: 'pixelated' }}
-                    />
+                    <div
+                      className="relative inline-block cursor-crosshair"
+                      onMouseMove={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setLoupe({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height, panel: 'right' });
+                      }}
+                      onMouseLeave={() => setLoupe(null)}
+                    >
+                      <img
+                        src={pureDefectsUrl}
+                        alt="défauts purs"
+                        className="max-h-[65vh] max-w-full object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                      {loupe && loupe.panel === 'right' && (
+                        <div style={{
+                          position: 'absolute', left: loupe.x - 90, top: loupe.y - 90,
+                          width: 180, height: 180, borderRadius: '50%',
+                          border: '3px solid rgba(255,255,255,0.8)',
+                          boxShadow: '0 0 12px rgba(0,0,0,0.5)',
+                          pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
+                          backgroundColor: '#6b7280',
+                        }}>
+                          <div style={{
+                            position: 'absolute', inset: 0,
+                            backgroundImage: `url(${pureDefectsUrl})`,
+                            backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
+                            backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
+                            backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
+                          }} />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
