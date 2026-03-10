@@ -129,33 +129,21 @@ router.post('/correct-finesses', async (req, res) => {
   }
 
   const tmp = (name) => path.join(jobDir, `_cf_${name}${T}`);
-  const tmpFiles = [tmp('alpha'), tmp('half'), tmp('dilated'), tmp('spread')];
+  const tmpFiles = [tmp('alpha'), tmp('dilated'), tmp('spread')];
 
   try {
-    // Correction fixe : 0.1mm par clic (indépendant du slider de détection)
-    const CORRECTION_MM = 0.1;
-    const radius = Math.max(1, Math.round(CORRECTION_MM / 25.4 * 300));
-    const halfRadius = Math.max(1, Math.round(radius / 2));
+    // Correction fixe : Dilate 1px par clic (cumulatif, indépendant du slider)
+    // 1. Extraire alpha
+    im(`magick "${inputPath}" -colorspace sRGB -alpha extract "${tmp('alpha')}"`);
 
-    // 1. Alpha pleine résolution + version demi-résolution pour la morphologie
-    im(`magick "${inputPath}" -colorspace sRGB -alpha extract -write "${tmp('alpha')}" -resize 50% "${tmp('half')}"`);
+    // 2. Dilater l'alpha de 1px (épaissit tous les bords de 1px)
+    im(`magick "${tmp('alpha')}" -morphology Dilate Disk:1 "${tmp('dilated')}"`);
 
-    // 2. Correction proportionnelle à demi-résolution (4x moins de pixels)
-    for (let r = 1; r <= halfRadius; r++) {
-      im(`magick "${tmp('half')}" ( +clone -morphology Open Disk:${r} ) -compose Difference -composite -morphology Dilate Square:1 "${tmp('dilated')}"`);
-      im(`magick "${tmp('half')}" "${tmp('dilated')}" -compose Lighten -composite "${tmp('half')}"`);
-    }
+    // 3. Propager les couleurs pour remplir les nouveaux pixels
+    im(`magick "${inputPath}" -channel A -threshold 50% +channel ( +clone -alpha extract ) -compose Multiply -composite -alpha off -morphology Dilate Square:3 "${tmp('spread')}"`);
 
-    // 3. Remonter le masque corrigé à la résolution originale
-    const dims = im(`magick identify -format "%wx%h" "${tmp('alpha')}"`);
-    im(`magick "${tmp('half')}" -resize ${dims}! "${tmp('alpha')}"`);
-
-    // 4. Propager les couleurs : nettoyage dirty alpha + Dilate MAX
-    const padSize = radius + 2;
-    im(`magick "${inputPath}" -channel A -threshold 50% +channel ( +clone -alpha extract ) -compose Multiply -composite -alpha off -morphology Dilate Square:${padSize} "${tmp('spread')}"`);
-
-    // 5. Appliquer le nouvel alpha corrigé
-    im(`magick "${tmp('spread')}" "${tmp('alpha')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
+    // 4. Appliquer le nouvel alpha dilaté
+    im(`magick "${tmp('spread')}" "${tmp('dilated')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
 
     // Nettoyage
     for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch {} }
