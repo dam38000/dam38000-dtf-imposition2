@@ -8,6 +8,53 @@ function im(cmd) {
   return execSync(cmd, { stdio: 'pipe' }).toString().trim();
 }
 
+// ============================================================
+// Puppeteer : exécute le code ORIGINAL du montage.html dans un vrai Canvas
+// ============================================================
+let _browser = null;
+async function getBrowser() {
+  if (!_browser || !_browser.isConnected()) {
+    const puppeteer = require('puppeteer');
+    _browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'],
+    });
+  }
+  return _browser;
+}
+
+async function runPuppeteerCorrection(inputPath, type = 'finesses') {
+  const imageBuffer = fs.readFileSync(inputPath);
+  const base64 = imageBuffer.toString('base64');
+  const dataUrl = `data:image/png;base64,${base64}`;
+
+  const finesse = 0.3;
+  const calculatedFinesse = (finesse / 0.08) * 0.75; // = 2.8125
+
+  const helperPath = path.join(__dirname, '..', 'correction-helper.html');
+  const fileUrl = 'file:///' + helperPath.replace(/\\/g, '/');
+
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+
+  try {
+    await page.goto(fileUrl, { waitUntil: 'domcontentloaded' });
+
+    // Exécuter la correction dans le contexte du navigateur
+    const resultDataUrl = await page.evaluate(async (imgDataUrl, calcFinesse, corrType) => {
+      if (corrType === 'finesses') {
+        return await window.correctImageFinesse(imgDataUrl, calcFinesse);
+      } else {
+        return await window.correctImageReserves(imgDataUrl, calcFinesse);
+      }
+    }, dataUrl, calculatedFinesse, type);
+
+    return resultDataUrl;
+  } finally {
+    await page.close();
+  }
+}
+
 // Extension pour fichiers temp : MIFF = format natif IM, pas de compression → 5-10x plus rapide que PNG
 const T = '.png';
 
@@ -111,8 +158,7 @@ router.post('/finesses', async (req, res) => {
 });
 
 // ============================================================
-// POST /correct-finesses — Correction PROPORTIONNELLE — OPTIMISÉE
-// Multi-niveaux : 2 appels IM par niveau au lieu de 4
+// POST /correct-finesses — Via Puppeteer (code original montage.html)
 // ============================================================
 router.post('/correct-finesses', async (req, res) => {
   const { file_id, threshold_mm } = req.body;
@@ -129,25 +175,14 @@ router.post('/correct-finesses', async (req, res) => {
     return res.status(404).json({ error: 'Fichier introuvable' });
   }
 
-  const tmp = (name) => path.join(jobDir, `_cf_${name}${T}`);
-  const tmpFiles = [tmp('alpha'), tmp('dilated'), tmp('spread')];
-
   try {
-    // Correction fixe : Dilate 2px par clic (~0.17mm, cumulatif)
-    // 1. Extraire alpha
-    im(`magick "${inputPath}" -colorspace sRGB -alpha extract "${tmp('alpha')}"`);
+    const resultDataUrl = await runPuppeteerCorrection(inputPath, 'finesses');
 
-    // 2. Dilater l'alpha de 2px (épaissit tous les bords de ~0.17mm)
-    im(`magick "${tmp('alpha')}" -morphology Dilate Disk:2 "${tmp('dilated')}"`);
+    // Convertir data URL → fichier PNG
+    const base64Data = resultDataUrl.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(correctedPath, Buffer.from(base64Data, 'base64'));
 
-    // 3. Propager les couleurs pour remplir les nouveaux pixels
-    im(`magick "${inputPath}" -channel A -threshold 50% +channel ( +clone -alpha extract ) -compose Multiply -composite -alpha off -morphology Dilate Square:5 "${tmp('spread')}"`);
-
-    // 4. Appliquer le nouvel alpha dilaté
-    im(`magick "${tmp('spread')}" "${tmp('dilated')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
-
-    // Nettoyage
-    for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch {} }
+    console.log(`[Correct Finesses Puppeteer] OK → ${correctedPath}`);
 
     // Ré-analyser
     const result = analyzeImage(jobDir, file_id, threshold_mm, 'corrected');
@@ -155,14 +190,13 @@ router.post('/correct-finesses', async (req, res) => {
     res.json(result);
 
   } catch (err) {
-    for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch {} }
-    console.error('[Correct Finesses]', err.message);
+    console.error('[Correct Finesses Puppeteer]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ============================================================
-// POST /correct-reserves — Élargir les espaces fins — DEMI-RÉSOLUTION
+// POST /correct-reserves — Via Puppeteer (code original montage.html)
 // ============================================================
 router.post('/correct-reserves', async (req, res) => {
   const { file_id, threshold_mm } = req.body;
@@ -179,41 +213,14 @@ router.post('/correct-reserves', async (req, res) => {
     return res.status(404).json({ error: 'Fichier introuvable' });
   }
 
-  const tmp = (name) => path.join(jobDir, `_cr_${name}${T}`);
-  const tmpFiles = [tmp('alpha'), tmp('half'), tmp('opened'), tmp('closed'), tmp('protected'), tmp('reserves'), tmp('toremove'), tmp('toremove_full'), tmp('newalpha')];
-
   try {
-    // Correction fixe : 0.1mm par clic (indépendant du slider de détection)
-    const CORRECTION_MM = 0.1;
-    const radius = Math.max(1, Math.round(CORRECTION_MM / 25.4 * 300));
-    const halfRadius = Math.max(1, Math.round(radius / 2));
+    const resultDataUrl = await runPuppeteerCorrection(inputPath, 'reserves');
 
-    // 1. Alpha full res + resize 50% pour morphologie rapide
-    im(`magick "${inputPath}" -colorspace sRGB -alpha extract -write "${tmp('alpha')}" -resize 50% "${tmp('half')}"`);
+    // Convertir data URL → fichier PNG
+    const base64Data = resultDataUrl.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(correctedPath, Buffer.from(base64Data, 'base64'));
 
-    // 2. Open + Close à demi-résolution
-    im(`magick "${tmp('half')}" -morphology Open Disk:${halfRadius} "${tmp('opened')}"`);
-    im(`magick "${tmp('half')}" -morphology Close Disk:${halfRadius} "${tmp('closed')}"`);
-
-    // 3. Protected à demi-résolution = alpha>49% AND opened<49%
-    im(`magick ( "${tmp('half')}" -threshold 49% ) ( "${tmp('opened')}" -threshold 49% -negate ) -compose Multiply -composite "${tmp('protected')}"`);
-
-    // 4. Reserves à demi-résolution + Dilate Square:1 (≈ Square:2 pleine résolution)
-    im(`magick ( "${tmp('half')}" -threshold 49% -negate ) ( "${tmp('closed')}" -threshold 49% ) -compose Multiply -composite -morphology Dilate Square:1 "${tmp('reserves')}"`);
-
-    // 5. ToRemove à demi-résolution
-    im(`magick "${tmp('reserves')}" ( "${tmp('half')}" -threshold 49% ) -compose Multiply -composite ( "${tmp('protected')}" -negate ) -compose Multiply -composite "${tmp('toremove')}"`);
-
-    // 6. Upscale toremove à pleine résolution
-    const dims = im(`magick identify -format "%wx%h" "${tmp('alpha')}"`);
-    im(`magick "${tmp('toremove')}" -resize ${dims}! -threshold 49% "${tmp('toremove_full')}"`);
-
-    // 7. Nouvel alpha + appliquer à pleine résolution
-    im(`magick "${tmp('alpha')}" ( "${tmp('toremove_full')}" -negate ) -compose Multiply -composite "${tmp('newalpha')}"`);
-    im(`magick "${inputPath}" "${tmp('newalpha')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
-
-    // Nettoyage
-    for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch {} }
+    console.log(`[Correct Reserves Puppeteer] OK → ${correctedPath}`);
 
     // Ré-analyser
     const result = analyzeImage(jobDir, file_id, threshold_mm, 'corrected');
@@ -221,8 +228,7 @@ router.post('/correct-reserves', async (req, res) => {
     res.json(result);
 
   } catch (err) {
-    for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch {} }
-    console.error('[Correct Reserves]', err.message);
+    console.error('[Correct Reserves Puppeteer]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

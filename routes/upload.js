@@ -169,8 +169,7 @@ router.post('/', upload.single('file'), async (req, res) => {
         }
 
         // Étape 1 : Extraction alpha
-        // IMPORTANT: -colorspace sRGB avant -alpha extract car IM inverse l'alpha en mode CMYK
-        const cmdAlpha = `magick "${normalizedPath}" -colorspace sRGB -alpha extract "${alphaPath}"`;
+        const cmdAlpha = `magick "${normalizedPath}" -alpha extract "${alphaPath}"`;
         try {
           execSync(cmdAlpha, { stdio: 'pipe' });
           console.log('[TIFF-CMYK] Étape 1/3 OK : alpha extrait');
@@ -181,7 +180,7 @@ router.post('/', upload.single('file'), async (req, res) => {
 
         // Étape 2 : Conversion ICC CMYK → eciRGB v2
         if (iccConversionOk) {
-          const cmdRgb = `magick "${normalizedPath}" -alpha off -profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}" "${rgbConvertedPath}"`;
+          const cmdRgb = `magick "${normalizedPath}" -colorspace CMYK -profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}" "${rgbConvertedPath}"`;
           try {
             execSync(cmdRgb, { stdio: 'pipe' });
             console.log('[TIFF-CMYK] Étape 2/3 OK : conversion CMYK → eciRGB v2');

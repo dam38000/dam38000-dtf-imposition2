@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Correction Helper</title></head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+// Fonctions copiees TELLES QUELLES du montage.html original
+
+const gaussianBlurAlpha = (alpha, w, h, sigma) => {
+    const radius = Math.ceil(sigma * 2);
+    const kernel = []; let sum = 0;
+    for (let i = -radius; i <= radius; i++) { const v = Math.exp(-(i*i)/(2*sigma*sigma)); kernel.push(v); sum += v; }
+    for (let i = 0; i < kernel.length; i++) kernel[i] /= sum;
+    const tmp = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let v = 0; for (let k = -radius; k <= radius; k++) { const ix = Math.max(0, Math.min(w-1, x+k)); v += alpha[y*w+ix] * kernel[k+radius]; } tmp[y*w+x] = v; } }
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let v = 0; for (let k = -radius; k <= radius; k++) { const iy = Math.max(0, Math.min(h-1, y+k)); v += tmp[iy*w+x] * kernel[k+radius]; } out[y*w+x] = v; } }
+    return out;
+};
+
+const correctImageFinesse = (imgSrc, finesse) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const w = img.width, h = img.height; const canvas = document.getElementById('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const alphaChannel = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) alphaChannel[i] = data[i * 4 + 3]; const radius = Math.ceil(finesse / 2); const eroded = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val < minA) minA = val; } else minA = 0; } } eroded[y * w + x] = minA; } } const dilated = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = eroded[iy * w + ix]; if (val > maxA) maxA = val; } } } dilated[y * w + x] = maxA; } } const dilatedBase = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val > maxA) maxA = val; } } } dilatedBase[y * w + x] = maxA; } } const closed = new Uint8Array(w * h); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = dilatedBase[iy * w + ix]; if (val < minA) minA = val; } } } closed[y * w + x] = minA; } }
+            const correctedAlpha = new Float32Array(w * h);
+            for (let i = 0; i < w * h; i++) correctedAlpha[i] = alphaChannel[i];
+            const addedR = new Float32Array(w * h);
+            const addedG = new Float32Array(w * h);
+            const addedB = new Float32Array(w * h);
+            for (let i = 0; i < w * h; i++) {
+                const originalAlpha = alphaChannel[i]; const processedAlpha = dilated[i];
+                if (originalAlpha > 100 && processedAlpha < 50) {
+                    const cy = Math.floor(i / w); const cx = i % w;
+                    for (let dy = -1; dy <= 1; dy++) { for (let dx = -1; dx <= 1; dx++) {
+                        const ny = cy + dy; const nx = cx + dx;
+                        if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                            const nPos = ny * w + nx;
+                            const isProtectedReserve = (alphaChannel[nPos] < 50 && closed[nPos] > 100);
+                            if (!isProtectedReserve && correctedAlpha[nPos] < 128) {
+                                let sumW = 0, sumR = 0, sumG = 0, sumB = 0;
+                                for (let ey = -2; ey <= 2; ey++) { for (let ex = -2; ex <= 2; ex++) {
+                                    const oy = ny + ey; const ox = nx + ex;
+                                    if (ox >= 0 && ox < w && oy >= 0 && oy < h) {
+                                        const oPos = oy * w + ox;
+                                        if (alphaChannel[oPos] > 128) {
+                                            const dist = Math.sqrt(ex*ex + ey*ey) + 0.01;
+                                            const w_i = 1.0 / dist;
+                                            sumW += w_i;
+                                            sumR += data[oPos*4]   * w_i;
+                                            sumG += data[oPos*4+1] * w_i;
+                                            sumB += data[oPos*4+2] * w_i;
+                                        }
+                                    }
+                                } }
+                                if (sumW > 0) {
+                                    addedR[nPos] = sumR / sumW;
+                                    addedG[nPos] = sumG / sumW;
+                                    addedB[nPos] = sumB / sumW;
+                                } else {
+                                    addedR[nPos] = data[i*4];
+                                    addedG[nPos] = data[i*4+1];
+                                    addedB[nPos] = data[i*4+2];
+                                }
+                                correctedAlpha[nPos] = 255;
+                            }
+                        }
+                    } }
+                }
+            }
+            const sigma = Math.max(1.2, finesse * 0.5);
+            const blurredFull = gaussianBlurAlpha(correctedAlpha, w, h, sigma);
+            const outputData = ctx.createImageData(w, h);
+            for (let i = 0; i < w * h; i++) {
+                const origA = alphaChannel[i];
+                const corrA = correctedAlpha[i];
+                const idx = i * 4;
+                if (corrA > origA) {
+                    outputData.data[idx]   = Math.round(addedR[i]);
+                    outputData.data[idx+1] = Math.round(addedG[i]);
+                    outputData.data[idx+2] = Math.round(addedB[i]);
+                    outputData.data[idx+3] = Math.round(Math.max(origA, blurredFull[i]));
+                } else {
+                    outputData.data[idx]   = data[idx];
+                    outputData.data[idx+1] = data[idx+1];
+                    outputData.data[idx+2] = data[idx+2];
+                    outputData.data[idx+3] = origA;
+                }
+            }
+            ctx.putImageData(outputData, 0, 0); resolve(canvas.toDataURL('image/png')); }; img.src = imgSrc; }); };
+
+// Fonction de correction des reserves - copiee telle quelle du montage.html
+const correctImageReserves = (imgSrc, finesse) => { return new Promise((resolve) => { const img = new Image(); img.crossOrigin = "Anonymous"; img.onload = () => { const w = img.width, h = img.height; const canvas = document.getElementById('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0); const imgData = ctx.getImageData(0, 0, w, h); const data = imgData.data; const outputData = ctx.createImageData(w, h); outputData.data.set(data); const alphaChannel = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) alphaChannel[i] = data[i * 4 + 3]; const radius = Math.ceil(finesse / 2); const len = w * h; const eroded = new Uint8Array(len); const dilated = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = alphaChannel[iy * w + ix]; if (val < minA) minA = val; if (val > maxA) maxA = val; } else { minA = 0; } } } eroded[y * w + x] = minA; dilated[y * w + x] = maxA; } } const opened = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let maxA = 0; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = eroded[iy * w + ix]; if (val > maxA) maxA = val; } } } opened[y * w + x] = maxA; } } const closed = new Uint8Array(len); for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let minA = 255; for (let ky = -radius; ky <= radius; ky++) { for (let kx = -radius; kx <= radius; kx++) { const iy = y + ky, ix = x + kx; if (ix >= 0 && ix < w && iy >= 0 && iy < h) { const val = dilated[iy * w + ix]; if (val < minA) minA = val; } } } closed[y * w + x] = minA; } } const isProtected = new Uint8Array(len); for (let i = 0; i < len; i++) { if (alphaChannel[i] > 100 && opened[i] < 50) { isProtected[i] = 1; } } const isTargetReserve = new Uint8Array(len); for (let i = 0; i < len; i++) { if (alphaChannel[i] < 50 && closed[i] > 100) { isTargetReserve[i] = 1; } } for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { const i = y * w + x; if (alphaChannel[i] > 100) { if (isProtected[i] === 1) { continue; } let isNeighborOfReserve = false; checkLoop: for (let dy = -1; dy <= 1; dy++) { for (let dx = -1; dx <= 1; dx++) { if (dx === 0 && dy === 0) continue; const ny = y + dy; const nx = x + dx; if (nx >= 0 && nx < w && ny >= 0 && ny < h) { const ni = ny * w + nx; if (isTargetReserve[ni] === 1) { isNeighborOfReserve = true; break checkLoop; } } } } if (isNeighborOfReserve) { const idx = i * 4; outputData.data[idx + 3] = 0; } } } } ctx.putImageData(outputData, 0, 0); resolve(canvas.toDataURL('image/png')); }; img.src = imgSrc; }); };
+
+// Exposer les fonctions pour Puppeteer
+window.correctImageFinesse = correctImageFinesse;
+window.correctImageReserves = correctImageReserves;
+</script>
+</body>
+</html>
