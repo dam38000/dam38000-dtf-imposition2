@@ -36,8 +36,9 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     // b) Finesses à demi-résolution : Open + Difference en 1 appel
     im(`magick "${t('half')}" ( +clone -morphology Open Disk:${halfRadius} ) -compose Difference -composite "${t('fin')}"`);
 
-    // c) Réserves à demi-résolution : Close + combine en 1 appel
-    im(`magick "${t('half')}" ( +clone -morphology Close Disk:${halfRadius} -threshold 49% ) +swap -threshold 49% -negate -compose Multiply -composite "${t('res')}"`);
+    // c) Réserves à demi-résolution : Close + Difference (symétrique des finesses)
+    // Close bouche les petits trous transparents, Difference montre ce qui a été bouché = réserves
+    im(`magick "${t('half')}" ( +clone -morphology Close Disk:${halfRadius} ) -compose Difference -composite "${t('res')}"`);
 
     // d) 3 stats à demi-résolution (mean invariant à l'échelle)
     const statsRaw = im(`magick "${t('fin')}" "${t('res')}" "${t('half')}" -format "%[mean]\\n" info:`);
@@ -48,15 +49,16 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     const finesses_percent = alphaMean > 0 ? Math.round((finMean / alphaMean) * 1000) / 10 : 0;
     const reserves_percent = alphaMean > 0 ? Math.round((resMean / alphaMean) * 1000) / 10 : 0;
 
-    // e) Overlay GAUCHE : finesses uniquement (magenta) — pas de vert sur le design
+    // e) Overlay combiné : finesses (magenta) + réserves (vert fluo)
     const dims = im(`magick identify -format "%wx%h" "${t('alpha')}"`);
-    if (has_finesses) {
-      im(`magick "${t('fin')}" -resize ${dims}! ( +clone -fill "rgb(255,0,255)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
-    } else {
-      im(`magick "${t('alpha')}" -alpha transparent PNG32:"${overlayPath}"`);
-    }
+    // Créer couche magenta (finesses) à pleine résolution
+    im(`magick "${t('fin')}" -resize ${dims}! ( +clone -fill "rgb(255,0,255)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${t('fin_color')}"`);
+    // Créer couche vert fluo (réserves) à pleine résolution
+    im(`magick "${t('res')}" -resize ${dims}! ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${t('res_color')}"`);
+    // Composer : vert (réserves) en base, magenta (finesses) par-dessus
+    im(`magick "${t('res_color')}" "${t('fin_color')}" -compose Over -composite PNG32:"${overlayPath}"`);
 
-    // f) Panneau DROIT : finesses uniquement (magenta) — pas de vert
+    // f) Panneau DROIT : même overlay combiné
     fs.copyFileSync(overlayPath, pureDefectsPath);
 
     // g) Miniature (seulement pour l'analyse principale)
@@ -122,7 +124,6 @@ router.post('/correct-finesses', async (req, res) => {
   const convertedPath = path.join(jobDir, 'converted.png');
   const correctedPath = path.join(jobDir, 'corrected_preview.png');
   const inputPath = fs.existsSync(correctedPath) ? correctedPath : convertedPath;
-  console.log('[Correct Finesses] inputPath:', inputPath, '| exists:', fs.existsSync(inputPath));
 
   if (!fs.existsSync(inputPath)) {
     return res.status(404).json({ error: 'Fichier introuvable' });
@@ -132,15 +133,15 @@ router.post('/correct-finesses', async (req, res) => {
   const tmpFiles = [tmp('alpha'), tmp('dilated'), tmp('spread')];
 
   try {
-    // Correction fixe : Dilate 1px par clic (cumulatif, indépendant du slider)
+    // Correction fixe : Dilate 2px par clic (~0.17mm, cumulatif)
     // 1. Extraire alpha
     im(`magick "${inputPath}" -colorspace sRGB -alpha extract "${tmp('alpha')}"`);
 
-    // 2. Dilater l'alpha de 1px (épaissit tous les bords de 1px)
-    im(`magick "${tmp('alpha')}" -morphology Dilate Disk:1 "${tmp('dilated')}"`);
+    // 2. Dilater l'alpha de 2px (épaissit tous les bords de ~0.17mm)
+    im(`magick "${tmp('alpha')}" -morphology Dilate Disk:2 "${tmp('dilated')}"`);
 
     // 3. Propager les couleurs pour remplir les nouveaux pixels
-    im(`magick "${inputPath}" -channel A -threshold 50% +channel ( +clone -alpha extract ) -compose Multiply -composite -alpha off -morphology Dilate Square:3 "${tmp('spread')}"`);
+    im(`magick "${inputPath}" -channel A -threshold 50% +channel ( +clone -alpha extract ) -compose Multiply -composite -alpha off -morphology Dilate Square:5 "${tmp('spread')}"`);
 
     // 4. Appliquer le nouvel alpha dilaté
     im(`magick "${tmp('spread')}" "${tmp('dilated')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);

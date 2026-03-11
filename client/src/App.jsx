@@ -6,14 +6,13 @@ import { launchImposition, fillPageWithImage } from './lib/imposition';
 export default function App() {
   const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
   const [margin, setMargin] = useState(0);
-  const [finesse, setFinesse] = useState(0.3);
+  const [finesse] = useState(0.2);
   const [impositionMode, setImpositionMode] = useState('massicot');
   const [files, setFiles] = useState([]);
   const [sheets, setSheets] = useState([]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [hasCalculated, setHasCalculated] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [simulatePrint, setSimulatePrint] = useState(false);
   const [errors, setErrors] = useState([]);
   const [activeTab, setActiveTab] = useState('standard');
   const [dragState, setDragState] = useState(null);
@@ -351,15 +350,12 @@ export default function App() {
         margin={margin}
         setMargin={setMargin}
         finesse={finesse}
-        setFinesse={setFinesse}
         impositionMode={impositionMode}
         setImpositionMode={setImpositionMode}
         files={files}
         setFiles={setFiles}
         isCalculating={isCalculating}
         isAnalyzing={isAnalyzing}
-        simulatePrint={simulatePrint}
-        setSimulatePrint={setSimulatePrint}
         onUpload={handleUpload}
         onMount={handleMount}
         onFillPage={handleFillPage}
@@ -379,7 +375,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         impositionMode={impositionMode}
         margin={margin}
-        simulatePrint={simulatePrint}
+        simulatePrint={false}
         dragState={dragState}
         setDragState={setDragState}
         onExportDessin={handleExportDessin}
@@ -472,7 +468,7 @@ export default function App() {
                 {/* GAUCHE : Design + overlay défauts */}
                 <div
                   className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
-                  style={{ backgroundColor: '#4b5563', backgroundImage: 'repeating-conic-gradient(#555 0% 25%, #444 0% 50%)', backgroundSize: '20px 20px' }}
+                  style={{ backgroundColor: '#4b5563' }}
                 >
                   <div
                     className="relative inline-block cursor-crosshair"
