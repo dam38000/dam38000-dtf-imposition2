@@ -28,8 +28,8 @@ async function runPuppeteerCorrection(inputPath, type = 'finesses') {
   const base64 = imageBuffer.toString('base64');
   const dataUrl = `data:image/png;base64,${base64}`;
 
-  const finesse = 0.3;
-  const calculatedFinesse = (finesse / 0.08) * 0.75; // = 2.8125
+  const finesse = 0.6;
+  const calculatedFinesse = (finesse / 0.08) * 0.75; // = 5.625
 
   const helperPath = path.join(__dirname, '..', 'correction-helper.html');
   const fileUrl = 'file:///' + helperPath.replace(/\\/g, '/');
@@ -38,7 +38,12 @@ async function runPuppeteerCorrection(inputPath, type = 'finesses') {
   const page = await browser.newPage();
 
   try {
+    // Timeout long : la correction pixel-par-pixel peut prendre plusieurs minutes
+    page.setDefaultTimeout(300000); // 5 minutes
     await page.goto(fileUrl, { waitUntil: 'domcontentloaded' });
+
+    console.log(`[Puppeteer] Lancement correction ${type}, finesse=${calculatedFinesse}`);
+    const startTime = Date.now();
 
     // Exécuter la correction dans le contexte du navigateur
     const resultDataUrl = await page.evaluate(async (imgDataUrl, calcFinesse, corrType) => {
@@ -49,6 +54,7 @@ async function runPuppeteerCorrection(inputPath, type = 'finesses') {
       }
     }, dataUrl, calculatedFinesse, type);
 
+    console.log(`[Puppeteer] Correction ${type} terminée en ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     return resultDataUrl;
   } finally {
     await page.close();
