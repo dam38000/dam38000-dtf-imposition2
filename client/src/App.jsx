@@ -6,26 +6,20 @@ import { launchImposition, fillPageWithImage } from './lib/imposition';
 export default function App() {
   const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
   const [margin, setMargin] = useState(0);
-  const [finesse] = useState(0.2);
+  const [finesse, setFinesse] = useState(0.3);
   const [impositionMode, setImpositionMode] = useState('massicot');
   const [files, setFiles] = useState([]);
   const [sheets, setSheets] = useState([]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [hasCalculated, setHasCalculated] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [simulatePrint, setSimulatePrint] = useState(false);
   const [errors, setErrors] = useState([]);
   const [activeTab, setActiveTab] = useState('standard');
   const [dragState, setDragState] = useState(null);
   const [manualSheets, setManualSheets] = useState(null);
   const [stats, setStats] = useState({ totalSheets: 0, details: [] });
   const [isExporting, setIsExporting] = useState(false);
-  const [finesseResults, setFinesseResults] = useState({});
-  const [inspectFinesseId, setInspectFinesseId] = useState(null);
-  const [correctedPreview, setCorrectedPreview] = useState(null);
-  const [isCorrecting, setIsCorrecting] = useState(false);
-  const [saveMessage, setSaveMessage] = useState(null);
-  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
-  const [loupe, setLoupe] = useState(null);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
@@ -157,149 +151,6 @@ export default function App() {
   const handleExportCoupe = useCallback(() => handleExport('coupe'), [handleExport]);
   const handleExportComposite = useCallback(() => handleExport('composite'), [handleExport]);
 
-  const handleAnalyze = useCallback(async () => {
-    const currentFiles = stateRef.current.files;
-    if (currentFiles.length === 0) return;
-    setIsAnalyzing(true);
-    try {
-      const results = {};
-      for (const f of currentFiles) {
-        try {
-          const res = await fetch('/api/analyze/finesses', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_id: f.id, threshold_mm: finesse }),
-          });
-          if (res.ok) {
-            results[f.id] = await res.json();
-          }
-        } catch (err) {
-          console.error(`Erreur analyse ${f.id}:`, err);
-        }
-      }
-      setFinesseResults(results);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [finesse]);
-
-  // === Handlers correction finesses/réserves ===
-  const handleCorrectFinesses = useCallback(async (fileId) => {
-    setIsCorrecting(true);
-    try {
-      const res = await fetch('/api/analyze/correct-finesses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: fileId, threshold_mm: finesse }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        data._ts = Date.now(); // cache bust
-        setCorrectedPreview(data);
-      }
-    } catch (err) {
-      console.error('Erreur correction finesses:', err);
-    } finally {
-      setIsCorrecting(false);
-    }
-  }, [finesse]);
-
-  const handleCorrectReserves = useCallback(async (fileId) => {
-    setIsCorrecting(true);
-    try {
-      const res = await fetch('/api/analyze/correct-reserves', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: fileId, threshold_mm: finesse }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        data._ts = Date.now();
-        setCorrectedPreview(data);
-      }
-    } catch (err) {
-      console.error('Erreur correction réserves:', err);
-    } finally {
-      setIsCorrecting(false);
-    }
-  }, [finesse]);
-
-  const handleSaveCorrection = useCallback(async () => {
-    if (!correctedPreview || !inspectFinesseId) return;
-    try {
-      const res = await fetch('/api/analyze/save-correction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: inspectFinesseId }),
-      });
-      if (res.ok) {
-        // Mettre à jour les résultats finesses avec les résultats corrigés
-        setFinesseResults(prev => ({
-          ...prev,
-          [inspectFinesseId]: {
-            ...correctedPreview,
-            // Remettre les URLs de l'analyse principale (recalculer)
-            finesses_overlay_url: `/uploads/${inspectFinesseId}/finesses_overlay.png`,
-            finesses_thumb_url: `/uploads/${inspectFinesseId}/finesses_thumb.png`,
-          }
-        }));
-        // Mettre à jour la miniature du fichier
-        setFiles(prev => prev.map(f => f.id === inspectFinesseId
-          ? { ...f, thumbnailUrl: `/uploads/${f.id}/thumbnail.png?t=${Date.now()}` }
-          : f
-        ));
-        setSaveMessage('Dessin sauvegardé !');
-        setTimeout(() => setSaveMessage(null), 2000);
-        setCorrectedPreview(null);
-        // Relancer l'analyse sur l'image sauvegardée
-        try {
-          const analysisRes = await fetch('/api/analyze/finesses', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_id: inspectFinesseId, threshold_mm: finesse }),
-          });
-          if (analysisRes.ok) {
-            const analysisData = await analysisRes.json();
-            setFinesseResults(prev => ({ ...prev, [inspectFinesseId]: analysisData }));
-          }
-        } catch {}
-      }
-    } catch (err) {
-      console.error('Erreur sauvegarde:', err);
-    }
-  }, [correctedPreview, inspectFinesseId, finesse]);
-
-  const handleCloseInspect = useCallback(() => {
-    if (correctedPreview) {
-      setShowUnsavedDialog(true);
-    } else {
-      setInspectFinesseId(null);
-      setCorrectedPreview(null);
-    }
-  }, [correctedPreview]);
-
-  const confirmSaveAndClose = useCallback(async () => {
-    await handleSaveCorrection();
-    setShowUnsavedDialog(false);
-    setInspectFinesseId(null);
-    setCorrectedPreview(null);
-  }, [handleSaveCorrection]);
-
-  const confirmDiscardAndClose = useCallback(async () => {
-    if (inspectFinesseId) {
-      try {
-        await fetch('/api/analyze/discard-correction', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: inspectFinesseId }),
-        });
-      } catch {}
-    }
-    setShowUnsavedDialog(false);
-    setInspectFinesseId(null);
-    setCorrectedPreview(null);
-  }, [inspectFinesseId]);
-
   const handleUpload = async (selectedFiles) => {
     setIsAnalyzing(true);
     setErrors([]);
@@ -350,18 +201,18 @@ export default function App() {
         margin={margin}
         setMargin={setMargin}
         finesse={finesse}
+        setFinesse={setFinesse}
         impositionMode={impositionMode}
         setImpositionMode={setImpositionMode}
         files={files}
         setFiles={setFiles}
         isCalculating={isCalculating}
         isAnalyzing={isAnalyzing}
+        simulatePrint={simulatePrint}
+        setSimulatePrint={setSimulatePrint}
         onUpload={handleUpload}
         onMount={handleMount}
         onFillPage={handleFillPage}
-        onAnalyze={handleAnalyze}
-        finesseResults={finesseResults}
-        onInspectFinesse={setInspectFinesseId}
       />
       <MainArea
         sheetSize={sheetSize}
@@ -375,7 +226,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         impositionMode={impositionMode}
         margin={margin}
-        simulatePrint={false}
+        simulatePrint={simulatePrint}
         dragState={dragState}
         setDragState={setDragState}
         onExportDessin={handleExportDessin}
@@ -383,255 +234,6 @@ export default function App() {
         onExportComposite={handleExportComposite}
         isExporting={isExporting}
       />
-      {/* Modale inspection finesses — 2 panneaux comme montage.html */}
-      {inspectFinesseId && finesseResults[inspectFinesseId] && (() => {
-        const file = files.find(f => f.id === inspectFinesseId);
-        const originalResult = finesseResults[inspectFinesseId];
-        if (!file) return null;
-
-        // Si correction en cours, utiliser les données corrigées
-        const result = correctedPreview || originalResult;
-        const ts = correctedPreview?._ts || Date.now();
-        const imageUrl = correctedPreview?.corrected_url
-          ? `${correctedPreview.corrected_url}?t=${ts}`
-          : `/uploads/${file.id}/converted.png?t=${ts}`;
-        const rawOverlay = correctedPreview
-          ? result.overlay_url
-          : (result.overlay_url || result.finesses_overlay_url);
-        const overlayUrl = rawOverlay ? `${rawOverlay}?t=${ts}` : null;
-        const rawPure = correctedPreview
-          ? result.pure_defects_url
-          : (result.pure_defects_url || result.overlay_url || result.finesses_overlay_url);
-        const pureDefectsUrl = rawPure ? `${rawPure}?t=${ts}` : null;
-
-        return (
-          <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center" onClick={handleCloseInspect}>
-            <div className="bg-white rounded-lg max-w-[95vw] max-h-[95vh] w-full flex flex-col shadow-2xl" onClick={e => e.stopPropagation()} style={{ maxWidth: '1400px' }}>
-
-              {/* HEADER */}
-              <div className="flex justify-between items-center px-4 py-2 border-b border-gray-200 flex-shrink-0">
-                <div className="flex items-center gap-4">
-                  <h3 className="font-bold text-sm">Inspection: {file.name}</h3>
-                  <button
-                    onClick={handleSaveCorrection}
-                    disabled={!correctedPreview}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${
-                      correctedPreview
-                        ? 'bg-green-600 hover:bg-green-700 text-white animate-pulse shadow-md'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    ✓ Enregistrer modification
-                  </button>
-                  {saveMessage && <span className="text-green-600 text-xs font-bold animate-pulse">{saveMessage}</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-white bg-fuchsia-500 px-2 py-1 rounded font-bold uppercase">
-                    Finesse ≤ {finesse} mm
-                  </span>
-                  <span className="text-[10px] text-black bg-green-400 px-2 py-1 rounded font-bold uppercase">
-                    Réserves ≤ {finesse} mm
-                  </span>
-                  <button onClick={handleCloseInspect} className="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none ml-2">&times;</button>
-                </div>
-              </div>
-
-              {/* BOUTONS CORRECTION */}
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex gap-2 flex-shrink-0">
-                <button
-                  onClick={() => handleCorrectFinesses(file.id)}
-                  disabled={isCorrecting}
-                  className="flex-1 py-2.5 text-white rounded font-bold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 shadow-md disabled:opacity-50"
-                  style={{ backgroundColor: '#FF00FF' }}
-                >
-                  {isCorrecting ? '⏳' : '↗'} Corriger Finesses (auto)
-                </button>
-                <button
-                  onClick={() => handleCorrectReserves(file.id)}
-                  disabled={isCorrecting}
-                  className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
-                >
-                  {isCorrecting ? '⏳' : '✂'} Corriger Réserves (Élargir)
-                </button>
-              </div>
-
-              {/* ZONE IMAGES — 2 panneaux */}
-              <div className="flex-1 flex overflow-hidden min-h-0 relative">
-                {/* Overlay chargement */}
-                {isCorrecting && (
-                  <div className="absolute inset-0 bg-white/80 z-30 flex flex-col items-center justify-center backdrop-blur-sm">
-                    <div className="animate-spin text-4xl mb-2">⏳</div>
-                    <p className="text-xs font-bold text-gray-700 uppercase animate-pulse">Correction en cours...</p>
-                  </div>
-                )}
-
-                {/* GAUCHE : Design + overlay défauts */}
-                <div
-                  className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
-                  style={{ backgroundColor: '#4b5563' }}
-                >
-                  <div
-                    className="relative inline-block cursor-crosshair"
-                    onMouseMove={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setLoupe({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height, panel: 'left' });
-                    }}
-                    onMouseLeave={() => setLoupe(null)}
-                  >
-                    <img
-                      src={imageUrl}
-                      alt="design"
-                      className="max-h-[65vh] max-w-full object-contain"
-                      style={{ imageRendering: 'pixelated' }}
-                    />
-                    {overlayUrl && (
-                      <img
-                        src={overlayUrl}
-                        alt="overlay défauts"
-                        className="absolute inset-0 w-full h-full object-contain"
-                        style={{ imageRendering: 'pixelated' }}
-                      />
-                    )}
-                    {loupe && loupe.panel === 'left' && (() => {
-                      const zoom = 10;
-                      const size = 180;
-                      const half = size / 2;
-                      const pxPerMm = (300 / 25.4) * zoom; // px par mm dans la loupe
-                      const step = pxPerMm * 0.125 * 0.6; // graduation × 0.6 — noté 0.5mm
-                      const circles = [];
-                      for (let r = step; r <= half; r += step) {
-                        circles.push(r);
-                      }
-                      return (
-                        <div style={{
-                          position: 'absolute', left: loupe.x - half, top: loupe.y - half,
-                          width: size, height: size, borderRadius: '50%',
-                          border: '3px solid rgba(0,0,0,0.3)',
-                          boxShadow: '0 0 12px rgba(0,0,0,0.5)',
-                          pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
-                          backgroundColor: '#ffffff',
-                        }}>
-                          <div style={{
-                            position: 'absolute', inset: 0,
-                            backgroundImage: `url(${imageUrl})`,
-                            backgroundSize: `${loupe.w * zoom}px ${loupe.h * zoom}px`,
-                            backgroundPosition: `${-loupe.x * zoom + half}px ${-loupe.y * zoom + half}px`,
-                            backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
-                          }} />
-                          <svg style={{ position: 'absolute', inset: 0, width: size, height: size }}>
-                            {circles.map((r, i) => (
-                              <circle key={i} cx={half} cy={half} r={r}
-                                fill="none" stroke="rgba(0,0,0,0.35)"
-                                strokeWidth={Math.round(r / step) % 2 === 0 ? 1 : 0.5}
-                              />
-                            ))}
-                            <circle cx={half} cy={half} r={2} fill="rgba(255,0,0,0.7)" />
-                            <line x1={half - 6} y1={half} x2={half + 6} y2={half} stroke="rgba(255,0,0,0.5)" strokeWidth={0.5} />
-                            <line x1={half} y1={half - 6} x2={half} y2={half + 6} stroke="rgba(255,0,0,0.5)" strokeWidth={0.5} />
-                            <text x={half + step * 2.5} y={half - step - 2} fontSize="11" fontWeight="bold" fill="#fff" stroke="#fff" strokeWidth={3} textAnchor="middle" paintOrder="stroke">0.5mm</text>
-                            <text x={half + step * 2.5} y={half - step - 2} fontSize="11" fontWeight="bold" fill="#000" textAnchor="middle">0.5mm</text>
-                          </svg>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-
-                {/* DROITE : Défauts purs sur fond gris */}
-                <div
-                  className="w-1/2 p-4 flex items-center justify-center relative overflow-auto"
-                  style={{ backgroundColor: '#6b7280' }}
-                >
-                  {pureDefectsUrl && (
-                    <div
-                      className="relative inline-block cursor-crosshair"
-                      onMouseMove={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setLoupe({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height, panel: 'right' });
-                      }}
-                      onMouseLeave={() => setLoupe(null)}
-                    >
-                      <img
-                        src={pureDefectsUrl}
-                        alt="défauts purs"
-                        className="max-h-[65vh] max-w-full object-contain"
-                        style={{ imageRendering: 'pixelated' }}
-                      />
-                      {loupe && loupe.panel === 'right' && (
-                        <div style={{
-                          position: 'absolute', left: loupe.x - 90, top: loupe.y - 90,
-                          width: 180, height: 180, borderRadius: '50%',
-                          border: '3px solid rgba(255,255,255,0.8)',
-                          boxShadow: '0 0 12px rgba(0,0,0,0.5)',
-                          pointerEvents: 'none', overflow: 'hidden', zIndex: 10,
-                          backgroundColor: '#6b7280',
-                        }}>
-                          <div style={{
-                            position: 'absolute', inset: 0,
-                            backgroundImage: `url(${pureDefectsUrl})`,
-                            backgroundSize: `${loupe.w * 3}px ${loupe.h * 3}px`,
-                            backgroundPosition: `${-loupe.x * 3 + 90}px ${-loupe.y * 3 + 90}px`,
-                            backgroundRepeat: 'no-repeat', imageRendering: 'pixelated',
-                          }} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* FOOTER — statistiques */}
-              <div className="px-4 py-2 border-t bg-gray-50 flex justify-between items-center flex-shrink-0">
-                <div className="flex gap-4 text-[11px]">
-                  <span className="text-gray-500">
-                    Seuil : <span className="font-bold">{result.threshold_mm} mm</span> ({result.radius_px} px)
-                  </span>
-                  {result.finesses_percent > 0 && (
-                    <span className="text-fuchsia-600 font-bold">
-                      Finesses : {result.finesses_percent}%
-                    </span>
-                  )}
-                  {result.reserves_percent > 0 && (
-                    <span className="text-green-600 font-bold">
-                      Réserves : {result.reserves_percent}%
-                    </span>
-                  )}
-                  {!result.has_finesses && !result.has_reserves && (
-                    <span className="text-green-600 font-bold">✓ Aucun défaut détecté</span>
-                  )}
-                </div>
-                <p className="text-[10px] text-gray-400">
-                  <span className="text-fuchsia-500 font-bold">■</span> Finesses &nbsp;
-                  <span className="text-green-500 font-bold">■</span> Réserves
-                </p>
-              </div>
-            </div>
-
-            {/* DIALOG modifications non sauvegardées */}
-            {showUnsavedDialog && (
-              <div className="absolute inset-0 bg-black/60 z-60 flex items-center justify-center" onClick={e => e.stopPropagation()}>
-                <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md">
-                  <h4 className="font-bold text-sm mb-3">⚠ Modifications non sauvegardées</h4>
-                  <p className="text-xs text-gray-600 mb-4">
-                    Vous avez des corrections en attente. Que souhaitez-vous faire ?
-                  </p>
-                  <div className="flex gap-2">
-                    <button onClick={confirmSaveAndClose} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-xs">
-                      Sauvegarder
-                    </button>
-                    <button onClick={confirmDiscardAndClose} className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-bold text-xs">
-                      Quitter sans sauver
-                    </button>
-                    <button onClick={() => setShowUnsavedDialog(false)} className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded font-bold text-xs">
-                      Annuler
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }

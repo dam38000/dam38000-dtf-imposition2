@@ -1,13 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { jsPDF } = require('jspdf');
+const { execSync } = require('child_process');
+
+const zlib = require('zlib');
 
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const TMP_DIR = path.join(__dirname, '..', 'tmp');
+const ECIRGB_PROFILE = path.join(__dirname, '..', 'profiles', 'eciRGB_v2.icc');
 
 // Conversion mm → pixels à 300 DPI
 function mmToPx(mm) {
@@ -28,57 +31,56 @@ router.post('/dessin', async (req, res) => {
     const canvasW = mmToPx(sheet_size.w);
     const canvasH = mmToPx(sheet_size.h);
 
-    // Préparer les composites
-    const composites = [];
-    for (const item of items) {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+    const jobId = uuidv4();
+    const tmpFiles = [];
+
+    // Créer le canvas transparent (sans profil ICC)
+    const canvasPath = path.join(TMP_DIR, `canvas_${jobId}.png`);
+    execSync(`magick -size ${canvasW}x${canvasH} xc:none -density 300 -units PixelsPerInch PNG32:"${canvasPath}"`, { stdio: 'pipe' });
+    tmpFiles.push(canvasPath);
+
+    // Composer chaque image sur le canvas
+    let currentCanvas = canvasPath;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const convertedPath = path.join(UPLOADS_DIR, item.file_id, 'converted.png');
       if (!fs.existsSync(convertedPath)) {
+        tmpFiles.forEach(f => { try { fs.unlinkSync(f); } catch {} });
         return res.status(404).json({ error: `Fichier non trouvé: ${item.file_id}` });
       }
 
-      let imgBuffer;
-      if (item.rotated) {
-        // Pivoter 90° puis redimensionner : après rotation, W et H sont inversés
-        imgBuffer = await sharp(convertedPath)
-          .rotate(90)
-          .resize(mmToPx(item.realW), mmToPx(item.realH), { fit: 'fill' })
-          .toBuffer();
-      } else {
-        imgBuffer = await sharp(convertedPath)
-          .resize(mmToPx(item.realW), mmToPx(item.realH), { fit: 'fill' })
-          .toBuffer();
-      }
+      const pxW = mmToPx(item.realW);
+      const pxH = mmToPx(item.realH);
+      const pxX = mmToPx(item.x);
+      const pxY = mmToPx(item.y);
 
-      composites.push({
-        input: imgBuffer,
-        left: mmToPx(item.x),
-        top: mmToPx(item.y),
-      });
+      // Préparer l'image : strip profil + resize (pas de conversion couleur)
+      const preparedPath = path.join(TMP_DIR, `prep_${jobId}_${i}.png`);
+      if (item.rotated) {
+        execSync(`magick "${convertedPath}" +profile '*' -rotate 90 -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
+      } else {
+        execSync(`magick "${convertedPath}" +profile '*' -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
+      }
+      tmpFiles.push(preparedPath);
+
+      // Composer sur le canvas
+      const nextCanvas = path.join(TMP_DIR, `canvas_${jobId}_${i}.png`);
+      execSync(`magick "${currentCanvas}" "${preparedPath}" -geometry +${pxX}+${pxY} -composite "${nextCanvas}"`, { stdio: 'pipe' });
+      tmpFiles.push(nextCanvas);
+      currentCanvas = nextCanvas;
     }
 
-    // Créer le canvas transparent et assembler
-    const resultBuffer = await sharp({
-      create: {
-        width: canvasW,
-        height: canvasH,
-        channels: 4,
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      }
-    })
-      .composite(composites)
-      .withMetadata({ density: 300 })
-      .png({ compressionLevel: 6 })
-      .toBuffer();
+    // Densité 300 DPI sur le résultat final
+    const outPath = path.join(TMP_DIR, `dessin_${jobId}.png`);
+    execSync(`magick "${currentCanvas}" -density 300 -units PixelsPerInch "${outPath}"`, { stdio: 'pipe' });
+    tmpFiles.push(outPath);
 
-    // Sauvegarder temporairement
-    fs.mkdirSync(TMP_DIR, { recursive: true });
-    const outName = `dessin_${uuidv4()}.png`;
-    const outPath = path.join(TMP_DIR, outName);
-    fs.writeFileSync(outPath, resultBuffer);
+    // Injecter le profil ICC eciRGB v2 dans le PNG (sans conversion de pixels)
+    injectIccProfile(outPath, ECIRGB_PROFILE);
 
-    res.download(outPath, 'dessin_300dpi.png', () => {
-      try { fs.unlinkSync(outPath); } catch {}
-    });
+    // Debug : garder les fichiers temporaires
+    res.download(outPath, 'dessin_300dpi.png');
 
   } catch (err) {
     console.error('Erreur export dessin:', err);
@@ -149,24 +151,33 @@ router.post('/composite', async (req, res) => {
       return res.status(400).json({ error: 'sheet_size et items requis' });
     }
 
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+    const jobId = uuidv4();
+    const tmpFiles = [];
+
     const doc = new jsPDF({
       orientation: sheet_size.w >= sheet_size.h ? 'landscape' : 'portrait',
       unit: 'mm',
       format: [sheet_size.w, sheet_size.h],
     });
 
-    // 1. Ajouter les images
-    for (const item of items) {
+    // 1. Ajouter les images (ImageMagick pour rotation, lecture directe sinon)
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const convertedPath = path.join(UPLOADS_DIR, item.file_id, 'converted.png');
       if (!fs.existsSync(convertedPath)) {
+        tmpFiles.forEach(f => { try { fs.unlinkSync(f); } catch {} });
         return res.status(404).json({ error: `Fichier non trouvé: ${item.file_id}` });
       }
 
       let imgBuffer;
       if (item.rotated) {
-        imgBuffer = await sharp(convertedPath).rotate(90).png().toBuffer();
+        const rotatedPath = path.join(TMP_DIR, `rot_${jobId}_${i}.png`);
+        execSync(`magick "${convertedPath}" -rotate 90 "${rotatedPath}"`, { stdio: 'pipe' });
+        tmpFiles.push(rotatedPath);
+        imgBuffer = fs.readFileSync(rotatedPath);
       } else {
-        imgBuffer = await sharp(convertedPath).png().toBuffer();
+        imgBuffer = fs.readFileSync(convertedPath);
       }
 
       const base64 = imgBuffer.toString('base64');
@@ -195,12 +206,11 @@ router.post('/composite', async (req, res) => {
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
 
-    fs.mkdirSync(TMP_DIR, { recursive: true });
-    const outName = `composite_${uuidv4()}.pdf`;
-    const outPath = path.join(TMP_DIR, outName);
+    const outPath = path.join(TMP_DIR, `composite_${jobId}.pdf`);
     fs.writeFileSync(outPath, pdfBuffer);
 
     res.download(outPath, 'composite.pdf', () => {
+      tmpFiles.forEach(f => { try { fs.unlinkSync(f); } catch {} });
       try { fs.unlinkSync(outPath); } catch {}
     });
 
@@ -209,5 +219,66 @@ router.post('/composite', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Injecte un profil ICC dans un PNG sans convertir les pixels
+// Crée un chunk iCCP avec le profil compressé et l'insère après le IHDR
+function injectIccProfile(pngPath, iccPath) {
+  const png = fs.readFileSync(pngPath);
+  const iccData = fs.readFileSync(iccPath);
+  const profileName = 'eciRGB v2';
+
+  // Compresser le profil ICC avec zlib deflate
+  const compressed = zlib.deflateSync(iccData);
+
+  // Construire le chunk iCCP : nom + null + compression_method(0) + données compressées
+  const nameBuf = Buffer.from(profileName, 'ascii');
+  const nullByte = Buffer.from([0x00]); // séparateur null
+  const compMethod = Buffer.from([0x00]); // méthode compression = deflate
+  const chunkData = Buffer.concat([nameBuf, nullByte, compMethod, compressed]);
+
+  // Chunk = length(4) + type(4) + data + crc(4)
+  const chunkType = Buffer.from('iCCP', 'ascii');
+  const lenBuf = Buffer.alloc(4);
+  lenBuf.writeUInt32BE(chunkData.length);
+
+  const crcInput = Buffer.concat([chunkType, chunkData]);
+  const crc = zlib.crc32(crcInput);
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc >>> 0);
+
+  const iccpChunk = Buffer.concat([lenBuf, chunkType, chunkData, crcBuf]);
+
+  // Trouver la fin du chunk IHDR (signature PNG = 8 octets, puis IHDR)
+  // IHDR est toujours le premier chunk : pos=8, length=4bytes, type=4bytes, data=13bytes, crc=4bytes
+  const ihdrLen = png.readUInt32BE(8);
+  const afterIhdr = 8 + 4 + 4 + ihdrLen + 4; // après signature + IHDR complet
+
+  // Supprimer un éventuel iCCP existant
+  let cleanPng = png;
+  let pos = 8;
+  while (pos < cleanPng.length) {
+    const cLen = cleanPng.readUInt32BE(pos);
+    const cType = cleanPng.toString('ascii', pos + 4, pos + 8);
+    const chunkTotal = 4 + 4 + cLen + 4;
+    if (cType === 'iCCP' || cType === 'sRGB') {
+      // Supprimer ce chunk
+      cleanPng = Buffer.concat([cleanPng.slice(0, pos), cleanPng.slice(pos + chunkTotal)]);
+      // Ne pas avancer pos, le prochain chunk est maintenant à la même position
+    } else {
+      pos += chunkTotal;
+    }
+  }
+
+  // Recalculer afterIhdr sur le PNG nettoyé
+  const cleanIhdrLen = cleanPng.readUInt32BE(8);
+  const cleanAfterIhdr = 8 + 4 + 4 + cleanIhdrLen + 4;
+
+  // Insérer le chunk iCCP juste après IHDR
+  const before = cleanPng.slice(0, cleanAfterIhdr);
+  const after = cleanPng.slice(cleanAfterIhdr);
+  const result = Buffer.concat([before, iccpChunk, after]);
+
+  fs.writeFileSync(pngPath, result);
+}
 
 module.exports = router;

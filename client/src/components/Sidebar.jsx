@@ -14,12 +14,12 @@ const PRESETS = {
 export default function Sidebar({
   sheetSize, setSheetSize,
   margin, setMargin,
-  finesse,
+  finesse, setFinesse,
   impositionMode, setImpositionMode,
   files, setFiles,
   isCalculating, isAnalyzing,
+  simulatePrint, setSimulatePrint,
   onUpload, onMount, onFillPage,
-  onAnalyze, finesseResults, onInspectFinesse,
 }) {
   const fileInputRef = useRef(null);
 
@@ -89,18 +89,47 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Marge + Bouton analyse */}
+          {/* Marge */}
           <div className="space-y-1">
             <div className="flex justify-between">
               <label className="block text-gray-800 font-semibold uppercase text-[10px]">Bordure (Marge)</label>
               <span className="text-blue-600 font-bold text-[10px]">{margin} mm</span>
             </div>
-            <div className="flex gap-2 items-center">
-              <input type="range" min="0" max="10" value={margin} onChange={(e) => setMargin(parseInt(e.target.value))} className="w-1/2 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"/>
-              <button onClick={onAnalyze} disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6">
-                {isAnalyzing ? <span className="animate-spin"><Icons.Loader size={10} /></span> : <Icons.Search size={10} />} Analyse finesses et réserves
+            <input type="range" min="0" max="10" value={margin} onChange={(e) => setMargin(parseInt(e.target.value))} className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"/>
+          </div>
+
+          {/* Finesse */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="block text-gray-800 font-semibold uppercase text-[10px]">Détection Finesse</label>
+              <span className="text-orange-600 font-bold text-[10px]">{finesse} mm</span>
+            </div>
+            <div className="flex gap-1 items-center">
+              <span className="text-[9px] font-bold text-gray-500 w-4 text-right">0.1</span>
+              <input type="range" min="0.1" max="0.5" step="0.05" value={finesse} onChange={(e) => setFinesse(parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" />
+              <span className="text-[9px] font-bold text-gray-500 w-4">0.5</span>
+              <button disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6 ml-1">
+                <Icons.Search size={10} /> Analyser
               </button>
             </div>
+          </div>
+
+          {/* Simulation impression */}
+          <div className="pt-2 border-t border-gray-200">
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-gray-800 font-semibold uppercase text-[10px] flex items-center gap-1">
+                <Icons.Eye size={12}/> Aperçu couleur d'impression
+              </label>
+              <div
+                onClick={() => setSimulatePrint(!simulatePrint)}
+                className={`relative w-8 h-4 rounded-full cursor-pointer transition-colors ${simulatePrint ? 'bg-indigo-600' : 'bg-gray-300'}`}
+              >
+                <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${simulatePrint ? 'translate-x-4' : 'translate-x-0'}`}></div>
+              </div>
+            </div>
+            <p className="text-[9px] text-gray-500 italic leading-tight">
+              {simulatePrint ? "simulation couleur impression" : "couleur originale du dessin"}
+            </p>
           </div>
         </div>
       </div>
@@ -126,9 +155,7 @@ export default function Sidebar({
         onRemove={removeFile}
         onRemoveAll={removeAllFiles}
         onUpdateQuantity={updateFileQuantity}
-        simulatePrint={false}
-        finesseResults={finesseResults}
-        onInspectFinesse={onInspectFinesse}
+        simulatePrint={simulatePrint}
       />
 
       {/* Barre actions bas */}
