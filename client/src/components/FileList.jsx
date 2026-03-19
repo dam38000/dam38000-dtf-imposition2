@@ -1,6 +1,6 @@
 import { Icons } from './Icons';
 
-export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantity, simulatePrint }) {
+export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantity, simulatePrint, onInspect }) {
   return (
     <div className="flex-1 overflow-y-auto bg-white p-3 space-y-3 relative pb-6">
       {files.length > 0 && (
@@ -27,6 +27,19 @@ export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantit
             <div className="flex justify-between items-start gap-1">
               <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span className="text-xs font-bold text-gray-900 truncate" title={file.name}>{file.name}</span>
+                {file.hasIssues && (
+                  <button
+                    onClick={() => onInspect(file.id)}
+                    className="px-1.5 py-0.5 bg-red-500 text-white text-[9px] font-bold rounded animate-pulse flex items-center gap-1 hover:bg-red-600 transition-colors"
+                  >
+                    <Icons.AlertTriangle size={10} /> Finesses
+                  </button>
+                )}
+                {file.hasIssues === false && file.overlaySrc && (
+                  <span className="px-1.5 py-0.5 bg-green-500 text-white text-[9px] font-bold rounded flex items-center gap-1">
+                    <Icons.CheckCircle size={10} /> OK
+                  </span>
+                )}
               </div>
               <button onClick={() => onRemove(file.id)} className="text-red-400 hover:text-red-600 flex-shrink-0 ml-1">
                 <Icons.X size={18}/>

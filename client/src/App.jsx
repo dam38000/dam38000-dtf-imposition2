@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainArea from './components/MainArea';
+import FinesseModal from './components/FinesseModal';
 import { launchImposition, fillPageWithImage } from './lib/imposition';
+import { generateExpansionOverlay, applyFinesseATN } from './lib/finesseDetection';
 
 export default function App() {
   const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
@@ -19,6 +21,8 @@ export default function App() {
   const [manualSheets, setManualSheets] = useState(null);
   const [stats, setStats] = useState({ totalSheets: 0, details: [] });
   const [isExporting, setIsExporting] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [inspectFileId, setInspectFileId] = useState(null);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
   const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab, finesse });
@@ -150,6 +154,44 @@ export default function App() {
   const handleExportCoupe = useCallback(() => handleExport('coupe'), [handleExport]);
   const handleExportComposite = useCallback(() => handleExport('composite'), [handleExport]);
 
+  const handleAnalyze = useCallback(async () => {
+    const currentFiles = stateRef.current.files;
+    if (currentFiles.length === 0) return;
+    setIsAnalyzing(true);
+    try {
+      for (const file of currentFiles) {
+        const dpi = file.dpiSource || 300;
+        const finesseMm = stateRef.current.finesse;
+        // openRadius = finesse en pixels / 2, minimum 2
+        const openRadius = Math.max(2, Math.round(finesseMm * dpi / 25.4 / 2));
+        const imgSrc = `/uploads/${file.id}/converted.png`;
+        const result = await generateExpansionOverlay(imgSrc, openRadius);
+        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, overlaySrc: result.overlaySrc, hasIssues: result.hasIssues } : f));
+      }
+    } catch (err) {
+      setErrors(prev => [...prev, `Analyse finesse: ${err.message}`]);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, []);
+
+  const handleCorrectFinesse = useCallback(async (fileId) => {
+    const file = stateRef.current.files.find(f => f.id === fileId);
+    if (!file) return;
+    const dpi = file.dpiSource || 300;
+    const finesseMm = stateRef.current.finesse;
+    const openRadius = Math.max(2, Math.round(finesseMm * dpi / 25.4 / 2));
+    const imgSrc = file.correctedSrc || `/uploads/${fileId}/converted.png`;
+
+    // Appliquer la correction ATN
+    const correctedSrc = await applyFinesseATN(imgSrc, openRadius);
+    if (!correctedSrc) return;
+
+    // Re-lancer la détection sur l'image corrigée
+    const result = await generateExpansionOverlay(correctedSrc, openRadius);
+    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, correctedSrc, overlaySrc: result.overlaySrc, hasIssues: result.hasIssues } : f));
+  }, []);
+
   const handleUpload = async (selectedFiles) => {
     setErrors([]);
 
@@ -209,6 +251,9 @@ export default function App() {
         onUpload={handleUpload}
         onMount={handleMount}
         onFillPage={handleFillPage}
+        onAnalyze={handleAnalyze}
+        isAnalyzing={isAnalyzing}
+        onInspect={setInspectFileId}
       />
       <MainArea
         sheetSize={sheetSize}
@@ -230,6 +275,14 @@ export default function App() {
         onExportComposite={handleExportComposite}
         isExporting={isExporting}
       />
+      {inspectFileId && (
+        <FinesseModal
+          file={files.find(f => f.id === inspectFileId)}
+          finesse={finesse}
+          onClose={() => setInspectFileId(null)}
+          onCorrectFinesse={handleCorrectFinesse}
+        />
+      )}
     </div>
   );
 }

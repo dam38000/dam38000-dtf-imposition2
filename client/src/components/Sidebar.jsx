@@ -20,6 +20,7 @@ export default function Sidebar({
   isCalculating,
   simulatePrint, setSimulatePrint,
   onUpload, onMount, onFillPage,
+  onAnalyze, isAnalyzing, onInspect,
 }) {
   const fileInputRef = useRef(null);
 
@@ -99,16 +100,23 @@ export default function Sidebar({
           </div>
 
           {/* Finesse */}
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="block text-gray-800 font-semibold uppercase text-[10px]">Détection Finesse</label>
-              <span className="text-orange-600 font-bold text-[10px]">{finesse} mm</span>
-            </div>
+          <div className="space-y-1 pt-2 border-t border-gray-200">
+            <label className="block text-gray-800 font-semibold uppercase text-[10px]">Détection Finesse (DTF uniquement)</label>
             <div className="flex gap-1 items-center">
-              <span className="text-[9px] font-bold text-gray-500 w-4 text-right">0.1</span>
+              <span className="text-[9px] font-bold text-gray-500 w-6 text-right">{finesse}</span>
               <input type="range" min="0.1" max="0.5" step="0.05" value={finesse} onChange={(e) => setFinesse(parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" />
-              <span className="text-[9px] font-bold text-gray-500 w-4">0.5</span>
+              <span className="text-[9px] font-bold text-gray-500 w-6">{finesse}</span>
+              <button
+                onClick={onAnalyze}
+                disabled={files.length === 0 || isAnalyzing}
+                className={`px-3 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-all ${files.length > 0 && !isAnalyzing ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Icons.Eye size={12} /> {isAnalyzing ? 'Analyse...' : 'Détection de finesses'}
+              </button>
             </div>
+            <p className="text-[9px] text-gray-500 italic leading-tight">
+              Appuyez sur le bouton pour savoir si votre dessin comporte des finesses &lt; à la valeur du curseur
+            </p>
           </div>
 
           {/* Simulation impression */}
@@ -153,6 +161,7 @@ export default function Sidebar({
         onRemoveAll={removeAllFiles}
         onUpdateQuantity={updateFileQuantity}
         simulatePrint={simulatePrint}
+        onInspect={onInspect}
       />
 
       {/* Barre actions bas */}
