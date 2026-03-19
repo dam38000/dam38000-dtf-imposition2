@@ -17,9 +17,9 @@ export default function Sidebar({
   finesse, setFinesse,
   impositionMode, setImpositionMode,
   files, setFiles,
-  isCalculating, isAnalyzing,
+  isCalculating,
   simulatePrint, setSimulatePrint,
-  onUpload, onMount, onFillPage, onAnalyze, onInspect,
+  onUpload, onMount, onFillPage,
 }) {
   const fileInputRef = useRef(null);
 
@@ -56,7 +56,7 @@ export default function Sidebar({
       </div>
 
       {/* Overlay traitement */}
-      {(isAnalyzing || isCalculating) && (
+      {isCalculating && (
         <div className="absolute inset-0 bg-white/80 z-30 flex flex-col items-center justify-center text-center backdrop-blur-sm rounded-lg">
           <div className="animate-spin-slow text-green-600 mb-2"><Icons.Loader size={32}/></div>
           <p className="text-xs font-bold text-green-700 uppercase animate-pulse">TRAITEMENT EN COURS...</p>
@@ -108,9 +108,6 @@ export default function Sidebar({
               <span className="text-[9px] font-bold text-gray-500 w-4 text-right">0.1</span>
               <input type="range" min="0.1" max="0.5" step="0.05" value={finesse} onChange={(e) => setFinesse(parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" />
               <span className="text-[9px] font-bold text-gray-500 w-4">0.5</span>
-              <button onClick={onAnalyze} disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6 ml-1">
-                <Icons.Search size={10} /> Analyser
-              </button>
             </div>
           </div>
 
@@ -156,7 +153,6 @@ export default function Sidebar({
         onRemoveAll={removeAllFiles}
         onUpdateQuantity={updateFileQuantity}
         simulatePrint={simulatePrint}
-        onInspect={onInspect}
       />
 
       {/* Barre actions bas */}
