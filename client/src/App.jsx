@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainArea from './components/MainArea';
+import FinesseModal from './components/FinesseModal';
 import { launchImposition, fillPageWithImage } from './lib/imposition';
+import { processThinLines, correctImageFinesse, correctImageReserves } from './lib/finesseDetection';
 
 export default function App() {
   const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
@@ -20,10 +22,11 @@ export default function App() {
   const [manualSheets, setManualSheets] = useState(null);
   const [stats, setStats] = useState({ totalSheets: 0, details: [] });
   const [isExporting, setIsExporting] = useState(false);
+  const [inspectFileId, setInspectFileId] = useState(null);
 
   // Ref pour toujours avoir les valeurs à jour dans les callbacks
-  const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab });
-  stateRef.current = { files, sheetSize, margin, impositionMode, activeTab };
+  const stateRef = useRef({ files, sheetSize, margin, impositionMode, activeTab, finesse });
+  stateRef.current = { files, sheetSize, margin, impositionMode, activeTab, finesse };
 
   const runImposition = useCallback(async (overrideTab, overrideFiles) => {
     const currentFiles = overrideFiles || stateRef.current.files;
@@ -151,6 +154,57 @@ export default function App() {
   const handleExportCoupe = useCallback(() => handleExport('coupe'), [handleExport]);
   const handleExportComposite = useCallback(() => handleExport('composite'), [handleExport]);
 
+  // Analyse finesses en tâche de fond pour une liste de fichiers
+  const runFinesseAnalysis = useCallback(async (targetFiles) => {
+    const currentFinesse = stateRef.current.finesse;
+    for (const file of targetFiles) {
+      const dpi = file.dpiSource || 300;
+      const finessePx = Math.round(currentFinesse * dpi / 25.4);
+      if (finessePx < 1) continue;
+      const imgSrc = `/uploads/${file.id}/converted.png`;
+      const result = await processThinLines(imgSrc, finessePx);
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, ...result } : f));
+    }
+  }, []);
+
+  // Analyse manuelle (bouton Analyser) — relance sur tous les fichiers
+  const handleAnalyze = useCallback(async () => {
+    setIsAnalyzing(true);
+    await runFinesseAnalysis(stateRef.current.files);
+    setIsAnalyzing(false);
+  }, [runFinesseAnalysis]);
+
+  // Correction finesses (+2px) pour un fichier
+  const handleCorrectFinesse = useCallback(async (fileId) => {
+    const file = stateRef.current.files.find(f => f.id === fileId);
+    if (!file) return;
+    const dpi = file.dpiSource || 300;
+    const finessePx = (stateRef.current.finesse / 0.08) * 1.125;
+    const imgSrc = `/uploads/${fileId}/converted.png`;
+    const correctedSrc = await correctImageFinesse(imgSrc, finessePx);
+    if (correctedSrc) {
+      // Relancer la détection sur l'image corrigée
+      const calcFinesse = Math.round(stateRef.current.finesse * dpi / 25.4);
+      const result = await processThinLines(correctedSrc, calcFinesse);
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, correctedSrc, ...result } : f));
+    }
+  }, []);
+
+  // Correction réserves (élargir) pour un fichier
+  const handleCorrectReserves = useCallback(async (fileId) => {
+    const file = stateRef.current.files.find(f => f.id === fileId);
+    if (!file) return;
+    const dpi = file.dpiSource || 300;
+    const finessePx = (stateRef.current.finesse / 0.08) * 1.125;
+    const imgSrc = `/uploads/${fileId}/converted.png`;
+    const correctedSrc = await correctImageReserves(imgSrc, finessePx);
+    if (correctedSrc) {
+      const calcFinesse = Math.round(stateRef.current.finesse * dpi / 25.4);
+      const result = await processThinLines(correctedSrc, calcFinesse);
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, correctedSrc, ...result } : f));
+    }
+  }, []);
+
   const handleUpload = async (selectedFiles) => {
     setIsAnalyzing(true);
     setErrors([]);
@@ -189,6 +243,8 @@ export default function App() {
 
     if (newFiles.length > 0) {
       setFiles(prev => [...prev, ...newFiles]);
+      // Analyse finesses en tâche de fond après upload
+      runFinesseAnalysis(newFiles);
     }
     setIsAnalyzing(false);
   };
@@ -213,6 +269,8 @@ export default function App() {
         onUpload={handleUpload}
         onMount={handleMount}
         onFillPage={handleFillPage}
+        onAnalyze={handleAnalyze}
+        onInspect={setInspectFileId}
       />
       <MainArea
         sheetSize={sheetSize}
@@ -234,6 +292,15 @@ export default function App() {
         onExportComposite={handleExportComposite}
         isExporting={isExporting}
       />
+      {inspectFileId && (
+        <FinesseModal
+          file={files.find(f => f.id === inspectFileId)}
+          finesse={finesse}
+          onClose={() => setInspectFileId(null)}
+          onCorrectFinesse={handleCorrectFinesse}
+          onCorrectReserves={handleCorrectReserves}
+        />
+      )}
     </div>
   );
 }

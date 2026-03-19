@@ -19,7 +19,7 @@ export default function Sidebar({
   files, setFiles,
   isCalculating, isAnalyzing,
   simulatePrint, setSimulatePrint,
-  onUpload, onMount, onFillPage,
+  onUpload, onMount, onFillPage, onAnalyze, onInspect,
 }) {
   const fileInputRef = useRef(null);
 
@@ -108,7 +108,7 @@ export default function Sidebar({
               <span className="text-[9px] font-bold text-gray-500 w-4 text-right">0.1</span>
               <input type="range" min="0.1" max="0.5" step="0.05" value={finesse} onChange={(e) => setFinesse(parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" />
               <span className="text-[9px] font-bold text-gray-500 w-4">0.5</span>
-              <button disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6 ml-1">
+              <button onClick={onAnalyze} disabled={files.length === 0 || isAnalyzing} className="flex items-center gap-1.5 px-2 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-[10px] font-bold transition-all shadow-md disabled:bg-gray-300 h-6 ml-1">
                 <Icons.Search size={10} /> Analyser
               </button>
             </div>
@@ -156,6 +156,7 @@ export default function Sidebar({
         onRemoveAll={removeAllFiles}
         onUpdateQuantity={updateFileQuantity}
         simulatePrint={simulatePrint}
+        onInspect={onInspect}
       />
 
       {/* Barre actions bas */}
