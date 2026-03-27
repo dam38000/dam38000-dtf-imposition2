@@ -303,3 +303,55 @@ export function applyFinesseATN(imgSrc, openRadius = 2) {
     img.src = imgSrc;
   });
 }
+
+// Épaissit tous les contours de l'image de `thickness` pixels
+// Equivalent du filtre Minimum de Photoshop : min(R,G,B) + max(A) sur les 4 canaux simultanément
+export function generateExpandedImage(imgSrc, thickness = 5) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      const w = img.width, h = img.height;
+      const offsets = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]];
+
+      // Lire les pixels de l'image originale
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+
+      // Filtre Minimum Photoshop : N itérations
+      // Pour chaque pixel : min(R), min(G), min(B), max(A) parmi pixel + 8 voisins
+      for (let step = 0; step < thickness; step++) {
+        const prev = new Uint8Array(d.length);
+        prev.set(d);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const ci = (y * w + x) * 4;
+            let mR = prev[ci], mG = prev[ci + 1], mB = prev[ci + 2], mA = prev[ci + 3];
+            for (const [dx, dy] of offsets) {
+              const nx = x + dx, ny = y + dy;
+              if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                const ni = (ny * w + nx) * 4;
+                if (prev[ni]     < mR) mR = prev[ni];
+                if (prev[ni + 1] < mG) mG = prev[ni + 1];
+                if (prev[ni + 2] < mB) mB = prev[ni + 2];
+                if (prev[ni + 3] > mA) mA = prev[ni + 3];
+              }
+            }
+            d[ci] = mR; d[ci + 1] = mG; d[ci + 2] = mB; d[ci + 3] = mA;
+          }
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+
+      // Superposer l'image originale par-dessus pour préserver les détails intérieurs
+      ctx.drawImage(img, 0, 0);
+
+      resolve(c.toDataURL('image/png'));
+    };
+    img.src = imgSrc;
+  });
+}

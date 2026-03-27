@@ -35,9 +35,9 @@ router.post('/dessin', async (req, res) => {
     const jobId = uuidv4();
     const tmpFiles = [];
 
-    // Créer le canvas transparent (sans profil ICC)
+    // Créer le canvas transparent avec le profil eciRGB v2 (évite conversion couleur à la composition)
     const canvasPath = path.join(TMP_DIR, `canvas_${jobId}.png`);
-    execSync(`magick -size ${canvasW}x${canvasH} xc:none -density 300 -units PixelsPerInch PNG32:"${canvasPath}"`, { stdio: 'pipe' });
+    execSync(`magick -size ${canvasW}x${canvasH} xc:none -profile "${ECIRGB_PROFILE}" -density 300 -units PixelsPerInch PNG32:"${canvasPath}"`, { stdio: 'pipe' });
     tmpFiles.push(canvasPath);
 
     // Composer chaque image sur le canvas
@@ -58,9 +58,9 @@ router.post('/dessin', async (req, res) => {
       // Préparer l'image : strip profil + resize (pas de conversion couleur)
       const preparedPath = path.join(TMP_DIR, `prep_${jobId}_${i}.png`);
       if (item.rotated) {
-        execSync(`magick "${convertedPath}" +profile '*' -rotate 90 -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
+        execSync(`magick "${convertedPath}" -rotate 90 -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
       } else {
-        execSync(`magick "${convertedPath}" +profile '*' -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
+        execSync(`magick "${convertedPath}" -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
       }
       tmpFiles.push(preparedPath);
 

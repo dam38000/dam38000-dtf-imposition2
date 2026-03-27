@@ -14,6 +14,70 @@ const SRGB_PROFILE = path.join(PROFILES_DIR, 'sRGB.icc');
 const ECIRGB_PROFILE = path.join(PROFILES_DIR, 'eciRGB_v2.icc');
 const FOGRA39_PROFILE = path.join(PROFILES_DIR, 'CoatedFOGRA39.icc');
 
+// Résoudre un nom de profil ICC (depuis XMP/photoshop:ICCProfile) vers un fichier .icc sur disque
+// Retourne { path, name, isEci } ou null si inconnu
+function resolveIccProfile(profileName) {
+  if (!profileName) return null;
+  const lower = profileName.toLowerCase();
+
+  // eciRGB (v1, v2, v4...)
+  if (lower.includes('ecirgb') || lower.includes('eci-rgb') || lower.includes('eci rgb')) {
+    // Préférer ICCv4 si le nom le mentionne
+    if (lower.includes('v4') || lower.includes('iccv4')) {
+      const v4 = path.join(PROFILES_DIR, 'eciRGB_v2_ICCv4.icc');
+      if (fs.existsSync(v4)) return { path: v4, name: profileName, isEci: true };
+    }
+    // Sinon v1 si mentionné
+    if (lower.includes('v1') || lower.includes('1.0')) {
+      const v1 = path.join(PROFILES_DIR, 'ECI-RGB.V1.0.icc');
+      if (fs.existsSync(v1)) return { path: v1, name: profileName, isEci: true };
+    }
+    return { path: ECIRGB_PROFILE, name: profileName, isEci: true };
+  }
+
+  // Adobe RGB
+  if (lower.includes('adobe') && lower.includes('rgb')) {
+    // Chercher un fichier AdobeRGB dans le dossier profiles
+    const candidates = ['AdobeRGB1998.icc', 'AdobeRGB.icc', 'Adobe RGB (1998).icc'];
+    for (const c of candidates) {
+      const p = path.join(PROFILES_DIR, c);
+      if (fs.existsSync(p)) return { path: p, name: profileName, isEci: false };
+    }
+    // Chercher tout fichier contenant "adobe" dans le dossier
+    try {
+      const files = fs.readdirSync(PROFILES_DIR);
+      const match = files.find(f => f.toLowerCase().includes('adobe'));
+      if (match) return { path: path.join(PROFILES_DIR, match), name: profileName, isEci: false };
+    } catch {}
+    console.warn(`[ICC] Profil AdobeRGB détecté mais aucun fichier .icc trouvé — fallback sRGB`);
+    return null;
+  }
+
+  // sRGB
+  if (lower.includes('srgb')) {
+    return { path: SRGB_PROFILE, name: profileName, isEci: false };
+  }
+
+  // FOGRA39
+  if (lower.includes('fogra39')) {
+    return { path: FOGRA39_PROFILE, name: profileName, isEci: false };
+  }
+
+  // Profil inconnu — chercher un fichier dont le nom correspond
+  try {
+    const files = fs.readdirSync(PROFILES_DIR);
+    const words = lower.split(/[\s,()]+/).filter(w => w.length > 2);
+    const match = files.find(f => words.some(w => f.toLowerCase().includes(w)));
+    if (match) {
+      console.log(`[ICC] Profil "${profileName}" → fichier trouvé par correspondance : ${match}`);
+      return { path: path.join(PROFILES_DIR, match), name: profileName, isEci: false };
+    }
+  } catch {}
+
+  console.warn(`[ICC] Profil "${profileName}" inconnu — aucun fichier .icc trouvé`);
+  return null;
+}
+
 // Multer : stockage temporaire en mémoire
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -103,10 +167,15 @@ router.post('/', upload.single('file'), async (req, res) => {
       // Lire le profil ICC avec Sharp (layer 0, le profil est partagé)
       hasAlpha = layerCount > 1; // si multi-layer, le layer sélectionné a de l'alpha
       iccProfile = null;
+      let sourceIccPath = null; // chemin vers le profil ICC extrait du fichier
       try {
         const metadata = await sharp(req.file.buffer).metadata();
         if (metadata.icc) {
           iccProfile = extractIccDescription(metadata.icc);
+          // Sauvegarder le profil ICC embarqué pour l'utiliser comme source
+          sourceIccPath = path.join(jobDir, 'source_profile.icc');
+          fs.writeFileSync(sourceIccPath, metadata.icc);
+          console.log(`[TIFF] Profil ICC embarqué extrait → source_profile.icc (${iccProfile})`);
         }
       } catch {}
 
@@ -158,39 +227,102 @@ router.post('/', upload.single('file'), async (req, res) => {
       // 6. Conversion ICC selon colorspace
       // Pour les commandes IM, le normalized.tif contient déjà le bon layer extrait,
       // donc pas besoin de [index] sur normalizedPath
+      const tiffAlphaPath = path.join(jobDir, 'step1_alpha.png');
+      const tiffColorPath = path.join(jobDir, 'step2_color.png');
+
       if (isCmyk) {
-        console.log('[TIFF] Pipeline CMYK');
+        console.log('[TIFF] Pipeline CMYK — procédure 3 étapes');
         if (iccProfile) {
           iccSourceLabel = iccProfile;
         } else {
           iccSourceLabel = 'CMYK / CoatedFOGRA39 (assigné)';
         }
 
-        // Conversion ICC en une seule commande : alpha extract + ICC convert + reassemble
-        const cmdIcc = `magick "${normalizedPath}" ^( -clone 0 -colorspace sRGB -alpha extract ^) ^( -clone 0 -alpha off -profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}" ^) -delete 0 +swap -compose CopyOpacity -composite PNG32:"${convertedPath}"`;
+        // Étape 1 : extraction alpha (forcer -colorspace sRGB)
         try {
-          execSync(cmdIcc, { stdio: 'pipe' });
-          console.log('[TIFF-CMYK] Conversion ICC CMYK → eciRGB v2 OK');
+          execSync(`magick "${normalizedPath}" -colorspace sRGB -alpha extract "${tiffAlphaPath}"`, { stdio: 'pipe' });
+          console.log('[TIFF-CMYK] Étape 1/3 OK : extraction alpha → step1_alpha.png');
         } catch (err) {
-          console.error(`[TIFF-CMYK] ERREUR conversion ICC: ${err.message}`);
+          console.error(`[TIFF-CMYK] ERREUR extraction alpha: ${err.message}`);
           iccConversionOk = false;
         }
+
+        // Étape 2 : conversion couleur CMYK → eciRGB v2
+        if (iccConversionOk) {
+          try {
+            let profileCmd;
+            if (sourceIccPath) {
+              // Utiliser le profil ICC embarqué extrait du fichier source
+              profileCmd = `-profile "${sourceIccPath}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[TIFF-CMYK] Source : profil embarqué (${iccProfile})`);
+            } else {
+              profileCmd = `-profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[TIFF-CMYK] Source : FOGRA39 assigné (pas de profil embarqué)`);
+            }
+            execSync(`magick "${normalizedPath}" -alpha off ${profileCmd} "${tiffColorPath}"`, { stdio: 'pipe' });
+            console.log(`[TIFF-CMYK] Étape 2/3 OK : conversion couleur → step2_color.png`);
+          } catch (err) {
+            console.error(`[TIFF-CMYK] ERREUR conversion couleur: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
+
+        // Étape 3 : assemblage couleur + alpha
+        if (iccConversionOk) {
+          try {
+            execSync(`magick "${tiffColorPath}" -alpha off "${tiffAlphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
+            console.log('[TIFF-CMYK] Étape 3/3 OK : assemblage final → converted.png');
+          } catch (err) {
+            console.error(`[TIFF-CMYK] ERREUR assemblage: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
       } else {
-        console.log('[TIFF] Pipeline RGB');
+        console.log('[TIFF] Pipeline RGB — procédure 3 étapes');
         if (iccProfile) {
           iccSourceLabel = iccProfile;
         } else {
           iccSourceLabel = 'sRGB (assigné)';
         }
 
-        // Conversion ICC en une seule commande : alpha extract + ICC convert + reassemble
-        const cmdIcc = `magick "${normalizedPath}" ^( -clone 0 -alpha extract ^) ^( -clone 0 -alpha off -profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}" ^) -delete 0 +swap -compose CopyOpacity -composite PNG32:"${convertedPath}"`;
+        // Étape 1 : extraction alpha
         try {
-          execSync(cmdIcc, { stdio: 'pipe' });
-          console.log('[TIFF-RGB] Conversion ICC sRGB → eciRGB v2 OK');
+          execSync(`magick "${normalizedPath}" -alpha extract "${tiffAlphaPath}"`, { stdio: 'pipe' });
+          console.log('[TIFF-RGB] Étape 1/3 OK : extraction alpha → step1_alpha.png');
         } catch (err) {
-          console.error(`[TIFF-RGB] ERREUR conversion ICC: ${err.message}`);
+          console.error(`[TIFF-RGB] ERREUR extraction alpha: ${err.message}`);
           iccConversionOk = false;
+        }
+
+        // Étape 2 : conversion couleur → eciRGB v2
+        if (iccConversionOk) {
+          try {
+            let profileCmd;
+            if (sourceIccPath) {
+              // Utiliser le profil ICC embarqué extrait du fichier source
+              profileCmd = `-profile "${sourceIccPath}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[TIFF-RGB] Source : profil embarqué (${iccProfile})`);
+            } else {
+              profileCmd = `-profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[TIFF-RGB] Source : sRGB assigné (pas de profil embarqué)`);
+            }
+            execSync(`magick "${normalizedPath}" -alpha off ${profileCmd} "${tiffColorPath}"`, { stdio: 'pipe' });
+            console.log(`[TIFF-RGB] Étape 2/3 OK : conversion couleur → step2_color.png`);
+          } catch (err) {
+            console.error(`[TIFF-RGB] ERREUR conversion couleur: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
+
+        // Étape 3 : assemblage couleur + alpha
+        if (iccConversionOk) {
+          try {
+            execSync(`magick "${tiffColorPath}" -alpha off "${tiffAlphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
+            console.log('[TIFF-RGB] Étape 3/3 OK : assemblage final → converted.png');
+          } catch (err) {
+            console.error(`[TIFF-RGB] ERREUR assemblage: ${err.message}`);
+            iccConversionOk = false;
+          }
         }
       }
 
@@ -204,11 +336,8 @@ router.post('/', upload.single('file'), async (req, res) => {
         }
       }
 
-      // Nettoyage fichiers temporaires
-      if (normalizedPath.endsWith('.tif')) {
-        try { fs.unlinkSync(normalizedPath); } catch {}
-        normalizedPath = convertedPath;
-      }
+      // normalized.tif conservé pour debug dans uploads/{id}/
+      console.log(`[TIFF] Fichiers intermédiaires conservés dans uploads/${id}/`);
 
     } else if (isPdf) {
       // ==================== PIPELINE PDF ====================
@@ -216,8 +345,9 @@ router.post('/', upload.single('file'), async (req, res) => {
       const originalPath = path.join(jobDir, 'original.pdf');
       fs.writeFileSync(originalPath, req.file.buffer);
 
-      // 2. Détecter le colorspace du PDF
+      // 2. Détecter le colorspace et le profil ICC du PDF
       let colorspace = 'sRGB'; // défaut
+      let pdfIccProfile = null; // profil ICC embarqué dans le PDF
       try {
         const csOut = execSync(`magick identify -format "%[colorspace]" "${originalPath}[0]"`, { stdio: 'pipe' }).toString().trim();
         if (csOut) colorspace = csOut;
@@ -225,53 +355,155 @@ router.post('/', upload.single('file'), async (req, res) => {
       } catch (err) {
         console.warn(`[PDF] Impossible de détecter le colorspace, défaut sRGB: ${err.message}`);
       }
+      try {
+        const iccOut = execSync(`magick identify -format "%[photoshop:ICCProfile]" "${originalPath}[0]"`, { stdio: 'pipe' }).toString().trim();
+        if (iccOut) {
+          pdfIccProfile = iccOut;
+          console.log(`[PDF] Profil ICC détecté dans le PDF : ${pdfIccProfile}`);
+        }
+      } catch {}
 
       const isCmyk = colorspace.toUpperCase() === 'CMYK';
 
       // 3. Rastérisation PDF → PNG avec conversion ICC selon colorspace
       if (isCmyk) {
-        console.log('[PDF] Pipeline CMYK détecté');
+        console.log('[PDF] Pipeline CMYK détecté — procédure 3 étapes (conversionpdfOK.bat)');
         iccSourceLabel = 'CMYK / CoatedFOGRA39 (assigné)';
         iccProfile = 'CoatedFOGRA39';
 
-        // PDF CMYK : 2 commandes nécessaires car -colorspace sRGB doit être
-        // AVANT la lecture du PDF pour que Ghostscript rastérise l'alpha correctement
-        const alphaPath = path.join(jobDir, '_alpha_tmp.png');
+        const alphaPath = path.join(jobDir, 'step1_alpha.png');
+        const colorPath = path.join(jobDir, 'step2_color.png');
 
-        // Étape 1 : extraction alpha (rastérisation en mode sRGB)
+        // Étape 1 : extraction alpha (forcer -colorspace sRGB pour que Ghostscript rastérise l'alpha correctement)
         try {
           execSync(`magick -quiet -density 300 -background none -colorspace sRGB "${originalPath}[0]" -alpha extract "${alphaPath}"`, { stdio: 'pipe' });
+          console.log('[PDF-CMYK] Étape 1/3 OK : extraction alpha → step1_alpha.png');
         } catch (err) {
           console.error(`[PDF-CMYK] ERREUR extraction alpha: ${err.message}`);
           iccConversionOk = false;
         }
 
-        // Étape 2 : ICC convert CMYK → eciRGB + réassemblage alpha
+        // Étape 2 : conversion couleur (forcer -colorspace CMYK pour empêcher Ghostscript de pré-convertir)
         if (iccConversionOk) {
           try {
-            execSync(`magick -quiet -density 300 "${originalPath}[0]" -alpha off -profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}" "${alphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
-            console.log('[PDF-CMYK] Conversion ICC CMYK → eciRGB v2 OK');
+            execSync(`magick -quiet -density 300 -colorspace CMYK "${originalPath}[0]" -profile "${FOGRA39_PROFILE}" -profile "${ECIRGB_PROFILE}" "${colorPath}"`, { stdio: 'pipe' });
+            console.log('[PDF-CMYK] Étape 2/3 OK : conversion couleur → step2_color.png');
           } catch (err) {
-            console.error(`[PDF-CMYK] ERREUR conversion ICC: ${err.message}`);
+            console.error(`[PDF-CMYK] ERREUR conversion couleur: ${err.message}`);
             iccConversionOk = false;
           }
         }
 
-        try { fs.unlinkSync(alphaPath); } catch {}
-      } else {
-        console.log('[PDF] Pipeline RGB détecté');
-        iccSourceLabel = 'sRGB (assigné)';
-        iccProfile = 'sRGB';
+        // Étape 3 : assemblage couleur + alpha
+        if (iccConversionOk) {
+          try {
+            execSync(`magick "${colorPath}" -alpha off "${alphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
+            console.log('[PDF-CMYK] Étape 3/3 OK : assemblage final → converted.png');
+          } catch (err) {
+            console.error(`[PDF-CMYK] ERREUR assemblage: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
 
-        // Conversion ICC en une seule commande (une seule rastérisation PDF)
-        const cmdIcc = `magick -quiet -density 300 -background none "${originalPath}[0]" ^( -clone 0 -alpha extract ^) ^( -clone 0 -alpha off -profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}" ^) -delete 0 +swap -compose CopyOpacity -composite PNG32:"${convertedPath}"`;
+        // Fichiers intermédiaires conservés pour debug dans uploads/{id}/
+      } else {
+        console.log('[PDF] Pipeline RGB détecté — procédure 4 étapes');
+
+        const rasterPath = path.join(jobDir, 'step1_raster.png');
+        const alphaPath = path.join(jobDir, 'step2_alpha.png');
+        const colorPath = path.join(jobDir, 'step3_color.png');
+
+        // Étape 1 : rastérisation PDF → PNG32 avec transparence
         try {
-          execSync(cmdIcc, { stdio: 'pipe' });
-          console.log('[PDF-RGB] Conversion ICC sRGB → eciRGB v2 OK');
+          execSync(`magick -quiet -density 300 -background none "${originalPath}[0]" PNG32:"${rasterPath}"`, { stdio: 'pipe' });
+          console.log('[PDF-RGB] Étape 1/4 OK : rastérisation → step1_raster.png');
         } catch (err) {
-          console.error(`[PDF-RGB] ERREUR conversion ICC: ${err.message}`);
+          console.error(`[PDF-RGB] ERREUR rastérisation: ${err.message}`);
           iccConversionOk = false;
         }
+
+        // Extraire le profil ICC embarqué dans le PNG rasterisé
+        let pdfSourceIccPath = null;
+        let pdfSourceIsEci = false;
+        try {
+          const rasterMeta = await sharp(rasterPath).metadata();
+          if (rasterMeta.icc) {
+            const embeddedName = extractIccDescription(rasterMeta.icc);
+            pdfSourceIccPath = path.join(jobDir, 'source_profile.icc');
+            fs.writeFileSync(pdfSourceIccPath, rasterMeta.icc);
+            iccProfile = embeddedName;
+            iccSourceLabel = embeddedName || 'profil embarqué (nom inconnu)';
+            // Vérifier si c'est déjà eciRGB
+            if (embeddedName && (embeddedName.toLowerCase().includes('ecirgb') || embeddedName.toLowerCase().includes('eci-rgb') || embeddedName.toLowerCase().includes('eci rgb'))) {
+              pdfSourceIsEci = true;
+            }
+            console.log(`[PDF-RGB] Profil ICC embarqué extrait → source_profile.icc (${embeddedName}, isEci=${pdfSourceIsEci})`);
+          }
+        } catch {}
+
+        // Fallback : détection XMP photoshop:ICCProfile si pas de profil embarqué
+        if (!pdfSourceIccPath) {
+          const resolved = resolveIccProfile(pdfIccProfile);
+          if (resolved) {
+            pdfSourceIccPath = resolved.path;
+            iccProfile = resolved.name;
+            iccSourceLabel = resolved.name;
+            pdfSourceIsEci = resolved.isEci;
+          } else {
+            iccProfile = 'sRGB';
+            iccSourceLabel = 'sRGB (assigné par défaut)';
+          }
+        }
+        console.log(`[PDF-RGB] Profil source : ${iccSourceLabel} (isEci=${pdfSourceIsEci})`);
+
+        // Étape 2 : extraction alpha
+        if (iccConversionOk) {
+          try {
+            execSync(`magick "${rasterPath}" -alpha extract "${alphaPath}"`, { stdio: 'pipe' });
+            console.log('[PDF-RGB] Étape 2/4 OK : extraction alpha → step2_alpha.png');
+          } catch (err) {
+            console.error(`[PDF-RGB] ERREUR extraction alpha: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
+
+        // Étape 3 : conversion couleur → eciRGB v2
+        if (iccConversionOk) {
+          try {
+            let profileCmd;
+            if (pdfSourceIsEci) {
+              // Source déjà eciRGB → pas de conversion, juste réassigner le profil
+              profileCmd = pdfSourceIccPath ? `-profile "${pdfSourceIccPath}"` : `-profile "${ECIRGB_PROFILE}"`;
+              console.log(`[PDF-RGB] Source déjà eciRGB → pas de conversion`);
+            } else if (pdfSourceIccPath) {
+              // Profil embarqué extrait → utiliser comme source
+              profileCmd = `-profile "${pdfSourceIccPath}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[PDF-RGB] Source : profil embarqué (${iccProfile}) → conversion vers eciRGB`);
+            } else {
+              // Pas de profil → fallback sRGB
+              profileCmd = `-profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}"`;
+              console.log(`[PDF-RGB] Source : sRGB assigné → conversion vers eciRGB`);
+            }
+            execSync(`magick "${rasterPath}" -alpha off ${profileCmd} "${colorPath}"`, { stdio: 'pipe' });
+            console.log(`[PDF-RGB] Étape 3/4 OK : conversion couleur → step3_color.png`);
+          } catch (err) {
+            console.error(`[PDF-RGB] ERREUR conversion couleur: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
+
+        // Étape 4 : assemblage couleur + alpha
+        if (iccConversionOk) {
+          try {
+            execSync(`magick "${colorPath}" -alpha off "${alphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
+            console.log('[PDF-RGB] Étape 4/4 OK : assemblage final → converted.png');
+          } catch (err) {
+            console.error(`[PDF-RGB] ERREUR assemblage: ${err.message}`);
+            iccConversionOk = false;
+          }
+        }
+
+        // Fichiers intermédiaires conservés pour debug dans uploads/{id}/
       }
 
       // Corriger le nom du profil iCCP
@@ -349,20 +581,50 @@ router.post('/', upload.single('file'), async (req, res) => {
         .toFile(normalizedPath);
 
       // 4. Conversion ICC avec ImageMagick (normalized.png → converted.png)
-      // Déterminer le profil source
-      if (iccProfile) {
-        iccSourceLabel = iccProfile;
+      // Extraire le profil ICC embarqué si présent
+      let pngSourceIccPath = null;
+      if (metadata.icc) {
+        pngSourceIccPath = path.join(jobDir, 'source_profile.icc');
+        fs.writeFileSync(pngSourceIccPath, metadata.icc);
+        iccSourceLabel = iccProfile || 'profil embarqué';
+        console.log(`[PNG] Profil ICC embarqué extrait → source_profile.icc (${iccProfile})`);
       } else {
         iccSourceLabel = 'sRGB (assigné)';
       }
 
-      // Conversion ICC en une seule commande : alpha extract + ICC convert + reassemble
-      const cmdIcc = `magick "${normalizedPath}" ^( -clone 0 -alpha extract ^) ^( -clone 0 -alpha off -profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}" ^) -delete 0 +swap -compose CopyOpacity -composite "${convertedPath}"`;
+      // Conversion 3 étapes (comme TIFF/PDF) pour cohérence
+      const pngAlphaPath = path.join(jobDir, 'step1_alpha.png');
+      const pngColorPath = path.join(jobDir, 'step2_color.png');
+
       try {
-        execSync(cmdIcc, { stdio: 'pipe' });
-        console.log('[ICC] Conversion ICC sRGB → eciRGB v2 OK');
+        // Étape 1 : extraction alpha
+        execSync(`magick "${normalizedPath}" -alpha extract "${pngAlphaPath}"`, { stdio: 'pipe' });
+        console.log('[PNG] Étape 1/3 OK : extraction alpha → step1_alpha.png');
+
+        // Étape 2 : conversion couleur
+        let profileCmd;
+        if (pngSourceIccPath) {
+          // Vérifier si déjà eciRGB
+          const isEci = iccProfile && (iccProfile.toLowerCase().includes('ecirgb') || iccProfile.toLowerCase().includes('eci-rgb') || iccProfile.toLowerCase().includes('eci rgb'));
+          if (isEci) {
+            profileCmd = `-profile "${pngSourceIccPath}"`;
+            console.log(`[PNG] Source déjà eciRGB → pas de conversion`);
+          } else {
+            profileCmd = `-profile "${pngSourceIccPath}" -profile "${ECIRGB_PROFILE}"`;
+            console.log(`[PNG] Source : profil embarqué (${iccProfile}) → conversion vers eciRGB`);
+          }
+        } else {
+          profileCmd = `-profile "${SRGB_PROFILE}" -profile "${ECIRGB_PROFILE}"`;
+          console.log(`[PNG] Source : sRGB assigné → conversion vers eciRGB`);
+        }
+        execSync(`magick "${normalizedPath}" -alpha off ${profileCmd} "${pngColorPath}"`, { stdio: 'pipe' });
+        console.log('[PNG] Étape 2/3 OK : conversion couleur → step2_color.png');
+
+        // Étape 3 : assemblage
+        execSync(`magick "${pngColorPath}" -alpha off "${pngAlphaPath}" -compose CopyOpacity -composite PNG32:"${convertedPath}"`, { stdio: 'pipe' });
+        console.log('[PNG] Étape 3/3 OK : assemblage final → converted.png');
       } catch (err) {
-        console.error(`[ICC] ERREUR conversion ICC: ${err.message}`);
+        console.error(`[PNG] ERREUR conversion ICC: ${err.message}`);
         iccConversionOk = false;
       }
 

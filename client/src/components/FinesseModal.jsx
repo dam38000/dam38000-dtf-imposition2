@@ -4,8 +4,11 @@ import { Icons } from './Icons';
 const ZOOM = 5;
 const LENS_RADIUS = 120;
 
-export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse }) {
+export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
   const [isCorrecting, setIsCorrecting] = useState(false);
+  const [isExpanding, setIsExpanding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const leftPanelRef = useRef(null);
   const rightPanelRef = useRef(null);
   const lensCanvasRef = useRef(null);
@@ -173,12 +176,52 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse 
     setIsCorrecting(false);
   };
 
+  const handleExpand = async () => {
+    if (!onExpandBordure) return;
+    setIsExpanding(true);
+    await onExpandBordure(file.id);
+    setIsExpanding(false);
+  };
+
+  const handleSave = async () => {
+    if (!onSave || !file.correctedSrc) return;
+    setIsSaving(true);
+    await onSave(file.id);
+    setIsSaving(false);
+  };
+
+  // Fermeture : si modifié, afficher le dialogue de confirmation
+  const handleRequestClose = () => {
+    if (file.correctedSrc) {
+      setShowConfirm(true);
+    } else {
+      onClose(false); // pas modifié, fermer directement
+    }
+  };
+
+  const handleConfirmSave = async () => {
+    setShowConfirm(false);
+    setIsSaving(true);
+    await onSave(file.id);
+    setIsSaving(false);
+    onClose(false); // déjà sauvegardé
+  };
+
+  const handleConfirmNoSave = () => {
+    setShowConfirm(false);
+    onClose(false); // fermer sans sauvegarder
+  };
+
+  const handleConfirmCancel = () => {
+    setShowConfirm(false); // rester dans la modale
+  };
+
   if (!file) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-      onClick={onClose}
+      onClick={handleRequestClose}
     >
       <div
         className="bg-white rounded-lg p-3 flex flex-col w-full h-full max-w-[95vw] max-h-[95vh]"
@@ -200,6 +243,20 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse 
             >
               <Icons.Maximize size={14} /> {isCorrecting ? 'Correction en cours...' : 'Corriger Finesses'}
             </button>
+            <button
+              onClick={handleExpand}
+              disabled={isExpanding}
+              className={`px-4 py-1.5 rounded font-bold text-xs flex items-center gap-2 transition-all ${!isExpanding ? 'bg-blue-600 text-white hover:bg-blue-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+            >
+              <Icons.Maximize size={14} /> {isExpanding ? 'Épaississement...' : 'Bordure'}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving || !file.correctedSrc}
+              className={`px-4 py-1.5 rounded font-bold text-xs flex items-center gap-2 transition-all ${file.correctedSrc && !isSaving ? 'bg-green-600 text-white hover:bg-green-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+            >
+              <Icons.Save size={14} /> {isSaving ? 'Enregistrement...' : 'Enregistrer'}
+            </button>
             {file.correctedSrc && (
               <span className="text-[10px] text-white bg-green-600 px-2 py-1 rounded font-bold">
                 Corrigé
@@ -207,7 +264,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse 
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={handleRequestClose}
             className="bg-red-600 text-white rounded-full p-1 shadow hover:bg-red-700 transition-colors"
           >
             <Icons.X size={16} />
@@ -320,6 +377,41 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse 
           </span>
         </div>
       </div>
+
+      {/* Dialogue de confirmation à la fermeture */}
+      {showConfirm && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4">
+            <h4 className="font-bold text-lg text-gray-800 mb-2">Image modifiée</h4>
+            <p className="text-sm text-gray-600 mb-6">
+              L'image a été corrigée. Voulez-vous enregistrer les modifications ?
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleConfirmCancel}
+                className="px-4 py-2 rounded text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleConfirmNoSave}
+                className="px-4 py-2 rounded text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+              >
+                Ne pas enregistrer
+              </button>
+              <button
+                onClick={handleConfirmSave}
+                className="px-4 py-2 rounded text-sm font-medium text-white bg-green-600 hover:bg-green-700 transition-colors"
+              >
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

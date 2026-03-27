@@ -17,6 +17,9 @@ app.use('/api/upload', uploadRoute);
 const exportRoute = require('./routes/export');
 app.use('/api/export', exportRoute);
 
+const saveImageRoute = require('./routes/save-image');
+app.use('/api/save-image', saveImageRoute);
+
 // Démarrage du serveur
 app.listen(PORT, () => {
   console.log(`Serveur DTF démarré sur http://localhost:${PORT}`);

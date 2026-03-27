@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import MainArea from './components/MainArea';
 import FinesseModal from './components/FinesseModal';
 import { launchImposition, fillPageWithImage } from './lib/imposition';
-import { generateExpansionOverlay, applyFinesseATN } from './lib/finesseDetection';
+import { generateExpansionOverlay, applyFinesseATN, generateExpandedImage } from './lib/finesseDetection';
 
 export default function App() {
   const [sheetSize, setSheetSize] = useState({ w: 575, h: 420 });
@@ -192,6 +192,41 @@ export default function App() {
     setFiles(prev => prev.map(f => f.id === fileId ? { ...f, correctedSrc, overlaySrc: result.overlaySrc, hasIssues: result.hasIssues } : f));
   }, []);
 
+  const handleExpandBordure = useCallback(async (fileId) => {
+    const file = stateRef.current.files.find(f => f.id === fileId);
+    if (!file) return;
+    const imgSrc = file.correctedSrc || `/uploads/${fileId}/converted.png`;
+    const thickness = 5;
+
+    const expandedSrc = await generateExpandedImage(imgSrc, thickness);
+    if (!expandedSrc) return;
+
+    const dpi = file.dpiSource || 300;
+    const finesseMm = stateRef.current.finesse;
+    const openRadius = Math.max(2, Math.round(finesseMm * dpi / 25.4 / 2));
+    const result = await generateExpansionOverlay(expandedSrc, openRadius);
+    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, correctedSrc: expandedSrc, overlaySrc: result.overlaySrc, hasIssues: result.hasIssues } : f));
+  }, []);
+
+  const handleSaveFinesse = useCallback(async (fileId) => {
+    const file = stateRef.current.files.find(f => f.id === fileId);
+    if (!file || !file.correctedSrc) return;
+    try {
+      const res = await fetch(`/api/save-image/${fileId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl: file.correctedSrc }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Erreur sauvegarde');
+      }
+      console.log(`[Save] Image ${fileId} sauvegardée sur le serveur`);
+    } catch (err) {
+      setErrors(prev => [...prev, `Sauvegarde: ${err.message}`]);
+    }
+  }, []);
+
   const handleUpload = async (selectedFiles) => {
     setErrors([]);
 
@@ -281,6 +316,8 @@ export default function App() {
           finesse={finesse}
           onClose={() => setInspectFileId(null)}
           onCorrectFinesse={handleCorrectFinesse}
+          onExpandBordure={handleExpandBordure}
+          onSave={handleSaveFinesse}
         />
       )}
     </div>
