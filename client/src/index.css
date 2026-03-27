@@ -8,10 +8,20 @@ body {
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius: 3px; }
+
+.cursor-grab { cursor: grab; }
+.cursor-grabbing { cursor: grabbing; }
+
 @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin-slow { animation: spin-slow 2s linear infinite; }
 
 @keyframes blink-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .animate-blink-fast { animation: blink-fast 0.8s ease-in-out infinite; }
+
+@keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.animate-pulse-fast { animation: pulse-fast 2s ease-in-out infinite; }
 
 .print-simulated { filter: saturate(0.75) brightness(0.95); }

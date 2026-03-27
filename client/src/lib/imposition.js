@@ -1,7 +1,7 @@
 import { GuillotinePacker, MaxRectsPacker, PixelPacker } from './packers';
 import { parseInput, createBitmapMask } from './bitmapUtils';
 
-export async function launchImposition({ files, sheetSize, margin, impositionMode, activeTab }) {
+export async function launchImposition({ files, sheetSize, margin, impositionMode, activeTab, stopRef }) {
   if (files.length === 0) return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: [] };
 
   const currentMode = impositionMode;
@@ -51,7 +51,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
     const packerPageH = Math.ceil(pageH * IMB_SCALE) + packerMarginPx * 2;
 
     for (let fId in fileData) {
-      if (Date.now() - startTime > TIMEOUT_LIMIT) {
+      if ((stopRef && stopRef.current) || Date.now() - startTime > TIMEOUT_LIMIT) {
         return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: ["Calcul interrompu."] };
       }
       const file = fileData[fId];
@@ -72,7 +72,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
     };
 
     for (let currentRuns = 1; currentRuns < 501; currentRuns++) {
-      if (Date.now() - startTime > TIMEOUT_LIMIT) {
+      if ((stopRef && stopRef.current) || Date.now() - startTime > TIMEOUT_LIMIT) {
         return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: ["Calcul interrompu."] };
       }
 
@@ -111,8 +111,9 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
           const variant = preRot
             ? currentSheetItems.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, mask: rotateMaskFn(it.mask), _prerotated: true }))
             : currentSheetItems.map(it => ({ ...it }));
-          const p = new PixelPacker(packerPageW, packerPageH);
-          const res = p.fit(variant, rot, sm);
+          const p = new PixelPacker(packerPageW, packerPageH, stopRef);
+          const res = await p.fit(variant, rot, sm);
+          if (p.stopped) break outerImb;
           const fixedRes = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
           if (fixedRes.length > bestPackedImb.length) bestPackedImb = fixedRes;
           if (bestPackedImb.length === currentSheetItems.length) break outerImb;
@@ -156,7 +157,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
   let solved = false, bestResult = null;
 
   for (let currentRuns = 1; currentRuns < 1001; currentRuns++) {
-    if (Date.now() - startTime > TIMEOUT_LIMIT) {
+    if ((stopRef && stopRef.current) || Date.now() - startTime > TIMEOUT_LIMIT) {
       return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: ["Calcul interrompu."] };
     }
 
@@ -246,23 +247,34 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
 export function fillPageWithImage({ files, sheetSize, margin, impositionMode, activeTab }) {
   if (files.length !== 1) return null;
   const file = files[0];
-  const m = parseInput(margin);
+  // En mode imbrication, marge forcée à 4mm minimum (comme dans launchImposition)
+  const m = (impositionMode === 'imbrication') ? Math.max(4, parseInput(margin)) : parseInput(margin);
   const pW = parseInput(sheetSize.w);
   const pH = parseInput(sheetSize.h);
   const iW = parseInput(file.width_mm) + m * 2;
   const iH = parseInput(file.height_mm) + m * 2;
   let q = Math.floor((pW * pH) / (iW * iH));
   if (q > 500) q = 500;
+  const allowRot = activeTab !== 'norotate';
+  const isOptimise = activeTab === 'compact';
+  const sortModesToTry = isOptimise ? ['area', 'width', 'none'] : [activeTab === 'grouped' ? 'none' : 'area'];
+  const packersToTry = isOptimise ? ['massicot', 'imbrique'] : [impositionMode === 'massicot' ? 'massicot' : 'imbrique'];
+  // Pour l'imbrication, le packer pixel n'est pas utilisable ici (pas de masque alpha),
+  // on utilise le rectangle packing avec les bonnes marges comme estimation conservative.
   while (q > 0) {
     const isMassiMode = (impositionMode === 'massicot' || impositionMode === 'imbrique');
     const packW = isMassiMode ? pW + m * 2 : pW;
     const packH = isMassiMode ? pH + m * 2 : pH;
-    const packer = (impositionMode === 'massicot') ? new GuillotinePacker(packW, packH) : new MaxRectsPacker(packW, packH);
     const items = Array(q).fill(null).map(() => ({ w: iW, h: iH }));
-    let sortModeSim = 'area';
-    if (activeTab === 'compact') sortModeSim = 'optimise';
-    if (activeTab === 'grouped') sortModeSim = 'none';
-    if (packer.fit(items, activeTab !== 'norotate', sortModeSim).length === q) break;
+    let fits = false;
+    for (const sm of sortModesToTry) {
+      for (const pm of packersToTry) {
+        const packer = pm === 'massicot' ? new GuillotinePacker(packW, packH) : new MaxRectsPacker(packW, packH);
+        if (packer.fit(items.map(it => ({ ...it })), allowRot, sm).length === q) { fits = true; break; }
+      }
+      if (fits) break;
+    }
+    if (fits) break;
     q--;
   }
   return q > 0 ? q : null;

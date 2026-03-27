@@ -169,17 +169,22 @@ export class MaxRectsPacker {
 }
 
 export class PixelPacker {
-  constructor(width, height) {
+  constructor(width, height, stopRef) {
     this.width = Math.ceil(width);
     this.height = Math.ceil(height);
     this.sheet = new Uint8Array(this.width * this.height);
+    this.stopRef = stopRef || null;
+    this.stopped = false;
   }
 
-  findBestPosition(mask) {
+  async findBestPosition(mask) {
     const limitY = this.height - mask.h;
     const limitX = this.width - mask.w;
     if (limitX < 0 || limitY < 0) return null;
     for (let y = 0; y <= limitY; y++) {
+      if (this.stopRef && this.stopRef.current) { this.stopped = true; return null; }
+      // Yield toutes les 20 lignes pour laisser le thread respirer
+      if (y > 0 && y % 20 === 0) await new Promise(r => setTimeout(r, 0));
       for (let x = 0; x <= limitX; x++) {
         if (!this.checkCollision(mask, x, y)) return { x, y };
       }
@@ -187,23 +192,27 @@ export class PixelPacker {
     return null;
   }
 
-  fit(items, allowRotation = true, sortMode = 'area') {
+  async fit(items, allowRotation = true, sortMode = 'area') {
     let packedItems = [];
+    this.stopped = false;
     if (sortMode === 'area') {
       items.sort((a, b) => (b.mask.w * b.mask.h) - (a.mask.w * a.mask.h));
     } else if (sortMode === 'width') {
       items.sort((a, b) => Math.max(b.mask.w, b.mask.h) - Math.max(a.mask.w, a.mask.h));
     }
     for (let item of items) {
+      if (this.stopRef && this.stopRef.current) { this.stopped = true; break; }
       let bestPos = null;
       let chosenRotated = false;
       let chosenMask = item.mask;
-      const posNormal = this.findBestPosition(item.mask);
+      const posNormal = await this.findBestPosition(item.mask);
+      if (this.stopped) break;
       let posRotated = null;
       let rotatedMask = null;
       if (allowRotation) {
         rotatedMask = this.rotateMask(item.mask);
-        posRotated = this.findBestPosition(rotatedMask);
+        posRotated = await this.findBestPosition(rotatedMask);
+        if (this.stopped) break;
       }
       if (posNormal && posRotated) {
         if (posRotated.y < posNormal.y || (posRotated.y === posNormal.y && posRotated.x < posNormal.x)) {
