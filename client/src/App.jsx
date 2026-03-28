@@ -5,7 +5,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Icons } from './components/Icons';
-import { launchImposition, fillPageWithImage } from './lib/imposition';
+import { launchImposition, fillPageWithImage, terminatePixelWorker } from './lib/imposition';
 import { PRIX_TABLES, FORMAT_MULTIPLES, roundToMultiple, getPrixUnitaire } from './lib/pricing';
 import { jsPDF } from 'jspdf';
 
@@ -1003,7 +1003,7 @@ export default function App() {
                 }}>
                 <div className="font-bold text-base tracking-wide uppercase">Tableau comparatif des differents types d&apos;impositions</div>
                 <div className="text-green-200 text-sm mt-1">Trouvez la maniere la plus economique de fabriquer vos transferts</div>
-                <button onClick={() => { setShowOptimalModal(false); optimalStopRef.current = true; }}
+                <button onClick={() => { setShowOptimalModal(false); optimalStopRef.current = true; terminatePixelWorker(); }}
                   className="absolute right-3 top-3 text-lg leading-none text-green-200 hover:text-white">
                   &#10005;
                 </button>
@@ -1075,13 +1075,13 @@ export default function App() {
 
                 {/* Boutons bas : Fermer + Calculer */}
                 <div className="flex gap-2 mt-3">
-                  <button onClick={() => { setShowOptimalModal(false); optimalStopRef.current = true; }}
+                  <button onClick={() => { setShowOptimalModal(false); optimalStopRef.current = true; terminatePixelWorker(); }}
                     disabled={isOptimalRunning}
                     className={`flex-1 py-1.5 rounded text-xs font-bold transition-colors ${isOptimalRunning ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}>
                     Fermer
                   </button>
                   {isOptimalRunning ? (
-                    <button onClick={() => { optimalStopRef.current = true; setIsOptimalRunning(false); }}
+                    <button onClick={() => { optimalStopRef.current = true; terminatePixelWorker(); setIsOptimalRunning(false); }}
                       className="flex-1 px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs rounded font-bold">
                       Arreter le calcul
                     </button>

@@ -1,5 +1,27 @@
-import { GuillotinePacker, MaxRectsPacker, PixelPacker } from './packers';
+import { GuillotinePacker, MaxRectsPacker } from './packers';
 import { parseInput, createBitmapMask } from './bitmapUtils';
+import PixelWorkerUrl from './pixelWorker.js?url';
+
+// ── Exécuter PixelPacker dans un Web Worker ──
+let activeWorker = null;
+function runPixelWorkerPack({ packerPageW, packerPageH, items, allowRotation, sortMode }) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(PixelWorkerUrl);
+    activeWorker = worker;
+    // Préparer les items avec gridBuffer (transférable)
+    const workerItems = items.map(it => ({
+      fileId: it.fileId, src: it.src,
+      w: it.w, h: it.h, realW: it.realW, realH: it.realH,
+      mask: { w: it.mask.w, h: it.mask.h, margin: it.mask.margin, gridBuffer: it.mask.grid.buffer.slice(0) }
+    }));
+    worker.onmessage = (e) => { activeWorker = null; worker.terminate(); resolve(e.data.result); };
+    worker.onerror = (err) => { activeWorker = null; worker.terminate(); reject(err); };
+    worker.postMessage({ packerPageW, packerPageH, items: workerItems, allowRotation, sortMode });
+  });
+}
+export function terminatePixelWorker() {
+  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+}
 
 export async function launchImposition({ files, sheetSize, margin, impositionMode, activeTab, stopRef }) {
   if (files.length === 0) return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: [] };
@@ -108,12 +130,15 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
 
       outerImb: for (const sm of imbSortModes) {
         for (const [preRot, rot] of imbOrients) {
+          if (stopRef && stopRef.current) break outerImb;
           const variant = preRot
             ? currentSheetItems.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, mask: rotateMaskFn(it.mask), _prerotated: true }))
             : currentSheetItems.map(it => ({ ...it }));
-          const p = new PixelPacker(packerPageW, packerPageH, stopRef);
-          const res = await p.fit(variant, rot, sm);
-          if (p.stopped) break outerImb;
+          let res;
+          try {
+            res = await runPixelWorkerPack({ packerPageW, packerPageH, items: variant, allowRotation: rot, sortMode: sm });
+          } catch { break outerImb; }
+          if (stopRef && stopRef.current) break outerImb;
           const fixedRes = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
           if (fixedRes.length > bestPackedImb.length) bestPackedImb = fixedRes;
           if (bestPackedImb.length === currentSheetItems.length) break outerImb;

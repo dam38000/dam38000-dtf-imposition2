@@ -21,7 +21,7 @@ body {
 @keyframes blink-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .animate-blink-fast { animation: blink-fast 0.8s ease-in-out infinite; }
 
-@keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.75; } }
 .animate-pulse-fast { animation: pulse-fast 2s ease-in-out infinite; }
 
 .print-simulated { filter: saturate(0.75) brightness(0.95); }
