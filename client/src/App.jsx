@@ -451,88 +451,90 @@ export default function App() {
   const handleExportPNG = async () => {
     if (sheets.length === 0) return;
     setIsCalculating(true);
-    setTimeout(async () => {
-      try {
-        const pW = sheetSize.w, pH = sheetSize.h;
-        const DPI = 300, MM_TO_PX = DPI / 25.4;
-        const canvasW = Math.round(pW * MM_TO_PX), canvasH = Math.round(pH * MM_TO_PX);
-        const sheet = sheets[currentSheetIndex];
-        const canvas = document.createElement('canvas');
-        canvas.width = canvasW; canvas.height = canvasH;
-        const ctx = canvas.getContext('2d');
-        for (const item of sheet.items) {
-          const img = new Image();
-          await new Promise(r => { img.onload = r; img.onerror = r; img.src = item.src; });
-          const x = Math.round((item.x + margin) * MM_TO_PX), y = Math.round((item.y + margin) * MM_TO_PX);
-          const w = Math.round((item.rotated ? item.realH : item.realW) * MM_TO_PX);
-          const h = Math.round((item.rotated ? item.realW : item.realH) * MM_TO_PX);
-          if (item.rotated) {
-            ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(Math.PI / 2);
-            ctx.drawImage(img, -h / 2, -w / 2, h, w); ctx.restore();
-          } else {
-            ctx.drawImage(img, x, y, w, h);
-          }
-        }
-        const pngData = pngSetDpi(canvas.toDataURL('image/png'), 300);
-        const link = document.createElement('a');
-        link.download = `montage-${productMode}-${selectedFormat}-dessin.png`;
-        link.href = pngData; link.click();
-      } catch (err) { console.error('Erreur Export PNG:', err); }
-      finally { setIsCalculating(false); }
-    }, 50);
+    try {
+      const sheet = sheets[currentSheetIndex];
+      const exportItems = sheet.items.map(item => ({
+        file_id: item.fileId,
+        x: item.x + margin,
+        y: item.y + margin,
+        realW: item.rotated ? item.realH : item.realW,
+        realH: item.rotated ? item.realW : item.realH,
+        rotated: item.rotated,
+      }));
+      const resp = await fetch('/api/export/dessin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = `montage-${productMode}-${selectedFormat}-dessin.png`;
+      link.href = url; link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { console.error('Erreur Export PNG:', err); }
+    finally { setIsCalculating(false); }
   };
 
   // ── Export 2 : Coupe PDF (traits de coupe vectoriels) ──
   const handleExportCut = async () => {
     if (sheets.length === 0) return;
     setIsCalculating(true);
-    setTimeout(async () => {
-      try {
-        const pW = sheetSize.w, pH = sheetSize.h;
-        const doc = new jsPDF({ orientation: pW > pH ? 'l' : 'p', unit: 'mm', format: [pW, pH] });
-        const sheet = sheets[currentSheetIndex];
-        doc.setDrawColor(255, 0, 0); doc.setLineWidth(0.1);
-        for (const item of sheet.items) {
-          const w = item.rotated ? item.realH : item.realW;
-          const h = item.rotated ? item.realW : item.realH;
-          doc.rect(item.x + margin, item.y + margin, w, h, 'S');
-        }
-        doc.save(`montage-${productMode}-${selectedFormat}-coupe.pdf`);
-      } catch (err) { console.error('Erreur Export Coupe:', err); }
-      finally { setIsCalculating(false); }
-    }, 50);
+    try {
+      const sheet = sheets[currentSheetIndex];
+      const exportItems = sheet.items.map(item => ({
+        file_id: item.fileId,
+        x: item.x + margin,
+        y: item.y + margin,
+        realW: item.rotated ? item.realH : item.realW,
+        realH: item.rotated ? item.realW : item.realH,
+        rotated: item.rotated,
+      }));
+      const resp = await fetch('/api/export/coupe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = `montage-${productMode}-${selectedFormat}-coupe.pdf`;
+      link.href = url; link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { console.error('Erreur Export Coupe:', err); }
+    finally { setIsCalculating(false); }
   };
 
   // ── Export 3 : Composite PDF basse définition (images + traits de coupe) ──
   const handleExportComposite = async () => {
     if (sheets.length === 0) return;
     setIsCalculating(true);
-    setTimeout(async () => {
-      try {
-        const pW = sheetSize.w, pH = sheetSize.h;
-        const doc = new jsPDF({ orientation: pW > pH ? 'l' : 'p', unit: 'mm', format: [pW, pH] });
-        const sheet = sheets[currentSheetIndex];
-        // Images
-        for (const item of sheet.items) {
-          const ix = item.x + margin, iy = item.y + margin;
-          if (item.rotated) {
-            const rotSrc = await rotateImage(item.src, item.realW, item.realH);
-            doc.addImage(rotSrc, 'PNG', ix, iy, item.realH, item.realW, undefined, 'FAST');
-          } else {
-            doc.addImage(item.src, 'PNG', ix, iy, item.realW, item.realH, undefined, 'FAST');
-          }
-        }
-        // Traits de coupe par-dessus
-        doc.setDrawColor(255, 0, 0); doc.setLineWidth(0.1);
-        for (const item of sheet.items) {
-          const w = item.rotated ? item.realH : item.realW;
-          const h = item.rotated ? item.realW : item.realH;
-          doc.rect(item.x + margin, item.y + margin, w, h, 'S');
-        }
-        doc.save(`montage-${productMode}-${selectedFormat}-composite.pdf`);
-      } catch (err) { console.error('Erreur Export Composite:', err); }
-      finally { setIsCalculating(false); }
-    }, 50);
+    try {
+      const sheet = sheets[currentSheetIndex];
+      const exportItems = sheet.items.map(item => ({
+        file_id: item.fileId,
+        x: item.x + margin,
+        y: item.y + margin,
+        realW: item.rotated ? item.realH : item.realW,
+        realH: item.rotated ? item.realW : item.realH,
+        rotated: item.rotated,
+      }));
+      const resp = await fetch('/api/export/composite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = `montage-${productMode}-${selectedFormat}-composite.pdf`;
+      link.href = url; link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { console.error('Erreur Export Composite:', err); }
+    finally { setIsCalculating(false); }
   };
 
   return (
@@ -910,7 +912,6 @@ export default function App() {
                 {/* Items positionnes — structure identique à PMT */}
                 {currentSheet && currentSheet.items.map((item, idx) => {
                   const isImbrication = impositionMode === 'imbrication';
-                  const isMassicot = impositionMode === 'massicot';
                   return (
                     <div key={idx}
                       className={`absolute flex items-center justify-center ${isImbrication ? 'overflow-visible' : 'overflow-hidden'}`}
@@ -920,6 +921,7 @@ export default function App() {
                         width: `${item.w}px`,
                         height: `${item.h}px`,
                         zIndex: 10,
+                        backgroundColor: isImbrication ? 'transparent' : 'white',
                       }}>
                       <div className="w-full h-full relative flex items-center justify-center">
                         <div className={`flex items-center justify-center relative ${impositionMode === 'imbrique' ? 'border border-blue-300 border-dashed' : ''}`}
@@ -927,9 +929,6 @@ export default function App() {
                             width: `${(item.rotated ? item.realH : item.realW) + margin * 2}px`,
                             height: `${(item.rotated ? item.realW : item.realH) + margin * 2}px`,
                           }}>
-                          {isMassicot && (
-                            <div className="absolute inset-0 border border-red-600 z-0 pointer-events-none"></div>
-                          )}
                           <img src={item.src} alt="" draggable={false}
                             className={`relative z-10 ${!isImbrication ? 'bg-blue-100' : ''} `}
                             style={{
@@ -946,6 +945,92 @@ export default function App() {
                     </div>
                   );
                 })}
+                {/* Contours rouges autour de chaque image */}
+                {currentSheet && (impositionMode === 'massicot' || impositionMode === 'imbrique') && currentSheet.items.map((item, idx) => (
+                  <div key={`contour-${idx}`} className="absolute pointer-events-none"
+                    style={{
+                      left: `${item.x}px`, top: `${item.y}px`,
+                      width: `${item.w}px`, height: `${item.h}px`,
+                      border: '0.5px solid #dc2626',
+                      zIndex: 15,
+                    }} />
+                ))}
+                {/* Lames de massicot en bleu — coupes traversantes réelles */}
+                {currentSheet && impositionMode === 'massicot' && (() => {
+                  const items = currentSheet.items;
+                  const EPSILON = 0.5;
+                  const W = sheetSize.w;
+                  const H = sheetSize.h;
+
+                  // Collecter toutes les coordonnées Y et X des bords d'images
+                  const allY = new Set();
+                  const allX = new Set();
+                  items.forEach(item => {
+                    allY.add(Math.round(item.y * 10) / 10);
+                    allY.add(Math.round((item.y + item.h) * 10) / 10);
+                    allX.add(Math.round(item.x * 10) / 10);
+                    allX.add(Math.round((item.x + item.w) * 10) / 10);
+                  });
+
+                  // Coupes horizontales : un Y est une lame valide si la ligne traverse
+                  // toute la largeur sans couper à l'intérieur d'une image
+                  const hCuts = Array.from(allY).filter(y => {
+                    if (y <= EPSILON || y >= H - EPSILON) return false;
+                    // Vérifier qu'aucune image n'est coupée verticalement par cette ligne
+                    return !items.some(item => y > item.y + EPSILON && y < item.y + item.h - EPSILON);
+                  });
+
+                  // Coupes verticales par bande : après les coupes horizontales, on a des bandes
+                  // Pour chaque bande, trouver les coupes verticales valides
+                  const sortedH = [0, ...hCuts.sort((a, b) => a - b), H];
+                  const vCutSegments = [];
+
+                  for (let bi = 0; bi < sortedH.length - 1; bi++) {
+                    const bandTop = sortedH[bi];
+                    const bandBot = sortedH[bi + 1];
+                    // Items dans cette bande
+                    const bandItems = items.filter(item =>
+                      item.y >= bandTop - EPSILON && item.y + item.h <= bandBot + EPSILON
+                    );
+                    if (bandItems.length === 0) continue;
+
+                    // Collecter les X de cette bande
+                    const bandX = new Set();
+                    bandItems.forEach(item => {
+                      bandX.add(Math.round(item.x * 10) / 10);
+                      bandX.add(Math.round((item.x + item.w) * 10) / 10);
+                    });
+
+                    // Filtrer : X valide si ne coupe aucune image de la bande
+                    Array.from(bandX).forEach(x => {
+                      if (x <= EPSILON || x >= W - EPSILON) return;
+                      const cutsImage = bandItems.some(item => x > item.x + EPSILON && x < item.x + item.w - EPSILON);
+                      if (!cutsImage) {
+                        vCutSegments.push({ x, top: bandTop, bottom: bandBot });
+                      }
+                    });
+                  }
+
+                  return (
+                    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 4 }}>
+                      {/* Coupes horizontales traversantes */}
+                      {hCuts.map(y => (
+                        <div key={`hcut-${y}`} className="absolute left-0 right-0"
+                          style={{ top: `${y}px`, borderTop: '1px solid #2563eb' }} />
+                      ))}
+                      {/* Coupes verticales par bande */}
+                      {vCutSegments.map((seg, i) => (
+                        <div key={`vcut-${i}`} className="absolute"
+                          style={{
+                            left: `${seg.x}px`,
+                            top: `${seg.top}px`,
+                            height: `${seg.bottom - seg.top}px`,
+                            borderLeft: '1px solid #2563eb',
+                          }} />
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             </div>

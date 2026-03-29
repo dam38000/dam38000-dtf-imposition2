@@ -105,22 +105,12 @@ router.post('/coupe', async (req, res) => {
       format: [sheet_size.w, sheet_size.h],
     });
 
-    // Traits de coupe rouges
+    // Trait rouge autour de chaque image
     doc.setDrawColor(255, 0, 0);
     doc.setLineWidth(0.1);
 
     for (const item of items) {
-      const rx = item.x - margin;
-      const ry = item.y - margin;
-      let rw, rh;
-      if (item.rotated) {
-        rw = item.realW + 2 * margin;
-        rh = item.realH + 2 * margin;
-      } else {
-        rw = item.realW + 2 * margin;
-        rh = item.realH + 2 * margin;
-      }
-      doc.rect(rx, ry, rw, rh, 'S');
+      doc.rect(item.x, item.y, item.realW, item.realH, 'S');
     }
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
