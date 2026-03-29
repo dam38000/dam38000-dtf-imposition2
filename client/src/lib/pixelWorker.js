@@ -58,7 +58,8 @@ class PixelPacker {
           x: bestPos.x + chosenMask.margin, y: bestPos.y + chosenMask.margin,
           w: chosenRotated ? item.h : item.w, h: chosenRotated ? item.w : item.h,
           realW: item.realW, realH: item.realH,
-          rotated: chosenRotated
+          rotated: chosenRotated,
+          _prerotated: item._prerotated || false
         });
       }
     }

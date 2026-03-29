@@ -1,7 +1,8 @@
 export class GuillotinePacker {
-  constructor(width, height) {
+  constructor(width, height, splitMode = 'auto') {
     this.width = width;
     this.height = height;
+    this.splitMode = splitMode; // 'auto', 'horizontal', 'vertical'
     this.freeRectangles = [{ x: 0, y: 0, w: width, h: height }];
   }
 
@@ -56,7 +57,7 @@ export class GuillotinePacker {
   splitNode(nodeIndex, w, h) {
     const node = this.freeRectangles[nodeIndex];
     this.freeRectangles.splice(nodeIndex, 1);
-    const preferHorizontalSplit = (this.width >= this.height);
+    const preferHorizontalSplit = this.splitMode === 'horizontal' ? true : this.splitMode === 'vertical' ? false : (this.width >= this.height);
     if (preferHorizontalSplit) {
       if (node.h - h > 0.5) this.freeRectangles.push({ x: node.x, y: node.y + h, w: node.w, h: node.h - h });
       if (node.w - w > 0.5) this.freeRectangles.push({ x: node.x + w, y: node.y, w: node.w - w, h: h });
@@ -68,9 +69,10 @@ export class GuillotinePacker {
 }
 
 export class MaxRectsPacker {
-  constructor(width, height) {
+  constructor(width, height, heuristic = 'bssf') {
     this.width = width;
     this.height = height;
+    this.heuristic = heuristic; // 'bssf' (Best Short Side Fit), 'blsf' (Best Long Side Fit), 'baf' (Best Area Fit)
     this.freeRectangles = [{ x: 0, y: 0, w: width, h: height }];
   }
 
@@ -98,25 +100,33 @@ export class MaxRectsPacker {
 
   findNode(w, h, allowRotation) {
     let bestNode = null;
-    let bestShort = Number.MAX_VALUE;
-    let bestLong = Number.MAX_VALUE;
+    let bestScore1 = Number.MAX_VALUE;
+    let bestScore2 = Number.MAX_VALUE;
     let rotated = false;
+    const heuristic = this.heuristic;
     const tryFit = (rect, width, height, isRotated) => {
       if (rect.w >= width && rect.h >= height) {
-        const ls = Math.abs(rect.w - width);
-        const ss = Math.abs(rect.h - height);
-        const short = Math.min(ls, ss);
-        const long = Math.max(ls, ss);
-        const betterFit = short < bestShort || (short === bestShort && long < bestLong);
-        let sameFitBetterPos = false;
-        if (short === bestShort && long === bestLong) {
+        let score1, score2;
+        if (heuristic === 'blsf') {
+          score1 = Math.max(Math.abs(rect.w - width), Math.abs(rect.h - height));
+          score2 = Math.min(Math.abs(rect.w - width), Math.abs(rect.h - height));
+        } else if (heuristic === 'baf') {
+          score1 = (rect.w * rect.h) - (width * height);
+          score2 = Math.min(Math.abs(rect.w - width), Math.abs(rect.h - height));
+        } else { // bssf
+          score1 = Math.min(Math.abs(rect.w - width), Math.abs(rect.h - height));
+          score2 = Math.max(Math.abs(rect.w - width), Math.abs(rect.h - height));
+        }
+        const better = score1 < bestScore1 || (score1 === bestScore1 && score2 < bestScore2);
+        let sameBetterPos = false;
+        if (score1 === bestScore1 && score2 === bestScore2) {
           if (!bestNode || rect.y < bestNode.y || (rect.y === bestNode.y && rect.x < bestNode.x)) {
-            sameFitBetterPos = true;
+            sameBetterPos = true;
           }
         }
-        if (betterFit || sameFitBetterPos) {
+        if (better || sameBetterPos) {
           bestNode = { x: rect.x, y: rect.y, w: width, h: height };
-          bestShort = short; bestLong = long; rotated = isRotated;
+          bestScore1 = score1; bestScore2 = score2; rotated = isRotated;
         }
       }
     };

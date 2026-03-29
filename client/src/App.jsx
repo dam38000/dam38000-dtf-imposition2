@@ -47,6 +47,8 @@ export default function App() {
   const [stats, setStats] = useState(null);
   const [impositionErrors, setImpositionErrors] = useState([]);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [variantsChooser, setVariantsChooser] = useState(null); // { variants: [{items, label}], runs, currentIdx }
+  const [calcProgress, setCalcProgress] = useState(''); // progression du calcul imbrication
   const [currentSheetIndex, setCurrentSheetIndex] = useState(0);
   const [allowRotation, setAllowRotation] = useState(true);
   const [allowMove, setAllowMove] = useState(false);
@@ -59,6 +61,7 @@ export default function App() {
   const [optimalProgress, setOptimalProgress] = useState(''); // texte progression
   const optimalCacheRef = useRef({});
   const optimalStopRef = useRef(false);
+  const calcStopRef = useRef(false);
   const [modalPos, setModalPos] = useState({ x: 0, y: 80 });
   const modalDragRef = useRef(null);
 
@@ -139,6 +142,7 @@ export default function App() {
   // ── Modifier quantite ──
   const updateQuantity = (id, delta) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, quantity: Math.max(1, f.quantity + delta) } : f));
+    resetPlanche();
   };
 
   // ── Modifier dimension (largeur ou hauteur) ──
@@ -146,21 +150,35 @@ export default function App() {
     const num = parseFloat(value);
     if (!isNaN(num) && num > 0) {
       setFiles(prev => prev.map(f => f.id === id ? { ...f, [field]: num } : f));
+      resetPlanche();
     }
   };
 
   // ── Supprimer un fichier ──
   const removeFile = (id) => {
     setFiles(prev => prev.filter(f => f.id !== id));
+    resetPlanche();
   };
 
+  // ── Remettre la planche à zéro (sans toucher aux fichiers) ──
+  const resetPlanche = () => { setSheets([]); setStats(null); setImpositionErrors([]); setCurrentSheetIndex(0); };
+
   // ── Tout effacer ──
-  const clearAll = () => { setFiles([]); setSheets([]); setStats(null); setImpositionErrors([]); setCurrentSheetIndex(0); };
+  const clearAll = () => { setFiles([]); resetPlanche(); };
 
   // ── Lancer l'imposition ──
   const handleMonter = async () => {
-    if (files.length === 0 || isCalculating) return;
+    // Si calcul en cours → arrêter
+    if (isCalculating) {
+      calcStopRef.current = true;
+      terminatePixelWorker();
+      setIsCalculating(false);
+      return;
+    }
+    if (files.length === 0) return;
+    calcStopRef.current = false;
     setIsCalculating(true);
+    setCalcProgress('');
     setSheets([]);
     setStats(null);
     setImpositionErrors([]);
@@ -182,6 +200,24 @@ export default function App() {
         margin,
         impositionMode,
         activeTab,
+        stopRef: calcStopRef,
+        onAskMoreVariants: (runs, variants, isComplete) => {
+          const mappedVariants = variants.map((v, i) => ({ items: v.items, label: v.label || `Variante ${i + 1}` }));
+          setVariantsChooser(prev => {
+            const idx = prev?.currentIdx || 0;
+            // Afficher la variante sélectionnée dans la planche
+            if (mappedVariants.length > 0 && idx < mappedVariants.length) {
+              setSheets([{ id: idx + 1, items: mappedVariants[idx].items, copies: runs, efficiency: 'N/A' }]);
+            }
+            return { variants: mappedVariants, runs, currentIdx: idx, searching: !isComplete };
+          });
+        },
+        onProgress: (msg) => setCalcProgress(msg),
+        onFirstResult: (intermediateResult) => {
+          setSheets(intermediateResult.sheets || []);
+          setStats(intermediateResult.stats || null);
+          setIsCalculating(false);
+        },
       });
       // Recalculer made avec arrondi format
       const isSeri = productMode === 'SeriQuadri' || productMode === 'SeriLight';
@@ -302,6 +338,10 @@ export default function App() {
               impositionMode: mode,
               activeTab,
               stopRef: optimalStopRef,
+              onLongCalc: (elapsed, run) => new Promise(resolve => {
+                const sec = Math.round(elapsed / 1000);
+                setLongCalcPrompt({ sec, run, resolve });
+              }),
             });
             const runs = result.stats?.totalSheets || 0;
             const dt = (performance.now() - tCalc).toFixed(0);
@@ -567,7 +607,7 @@ export default function App() {
           <div className="mt-2 flex flex-col gap-1">
             <div className="flex justify-center gap-1">
               {Object.keys(PRODUCT_FORMATS).map(m => (
-                <button key={m} onClick={() => { setProductMode(m); setSelectedFormat(Object.keys(PRODUCT_FORMATS[m])[0]); }}
+                <button key={m} onClick={() => { setProductMode(m); setSelectedFormat(Object.keys(PRODUCT_FORMATS[m])[0]); resetPlanche(); }}
                   className={`px-2 py-1 rounded text-[10px] font-bold transition-all
                     ${productMode === m ? 'bg-white text-green-800 shadow' : 'bg-green-600 text-white hover:bg-green-500'}`}>
                   {m}
@@ -582,7 +622,7 @@ export default function App() {
           <div className="p-3 space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-gray-600 w-16">Format</span>
-              <select value={selectedFormat} onChange={e => setSelectedFormat(e.target.value)}
+              <select value={selectedFormat} onChange={e => { setSelectedFormat(e.target.value); resetPlanche(); }}
                 className="flex-1 text-xs border border-gray-300 rounded px-2 py-1.5 bg-white">
                 {Object.entries(formats).map(([name, size]) => (
                   <option key={name} value={name}>{name} ({size.w} x {size.h} mm)</option>
@@ -592,7 +632,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-gray-600 w-16">Bordure</span>
               <input type="range" min="0" max="10" step="0.5" value={margin}
-                onChange={e => setMargin(parseFloat(e.target.value))}
+                onChange={e => { setMargin(parseFloat(e.target.value)); resetPlanche(); }}
                 className="flex-1 accent-green-600" />
               <span className="text-xs font-bold text-gray-700 w-12 text-right">{margin} mm</span>
             </div>
@@ -602,19 +642,19 @@ export default function App() {
         {/* ── Modes d'imposition ── */}
         <div className="p-2 bg-gray-50 border-b border-gray-300 shadow-md z-20 flex-shrink-0">
           <div className="flex gap-2">
-            <button onClick={() => setImpositionMode('massicot')}
+            <button onClick={() => { setImpositionMode('massicot'); resetPlanche(); }}
               className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
                 ${impositionMode === 'massicot' ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
               <Icons.Layout />
               <span className="font-bold text-[14px] mt-0.5">Massicotable</span>
             </button>
-            <button onClick={() => setImpositionMode('imbrique')}
+            <button onClick={() => { setImpositionMode('imbrique'); resetPlanche(); }}
               className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
                 ${impositionMode === 'imbrique' ? 'border-purple-600 bg-purple-50 text-purple-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
               <Icons.Scissors />
               <span className="font-bold text-[14px] mt-0.5">Non Massicotable</span>
             </button>
-            <button onClick={() => setImpositionMode('imbrication')}
+            <button onClick={() => { setImpositionMode('imbrication'); resetPlanche(); }}
               className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
                 ${impositionMode === 'imbrication' ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
               <Icons.Puzzle />
@@ -705,14 +745,15 @@ export default function App() {
                         onChange={e => {
                           const v = Math.abs(parseInt(e.target.value)) || 0;
                           setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: v } : ff));
+                          resetPlanche();
                         }}
                         className="w-full text-sm font-bold text-gray-800 px-1.5 py-1 bg-white focus:outline-none rounded-l" />
                       <div className="flex flex-col border-l border-gray-200 h-full">
-                        <button onClick={() => setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: ff.quantity + 1 } : ff))}
+                        <button onClick={() => { setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: ff.quantity + 1 } : ff)); resetPlanche(); }}
                           className="px-1 py-0 hover:bg-gray-100 text-gray-500 text-[8px] leading-[14px]">
                           <Icons.ArrowUp />
                         </button>
-                        <button onClick={() => setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: Math.max(0, ff.quantity - 1) } : ff))}
+                        <button onClick={() => { setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: Math.max(0, ff.quantity - 1) } : ff)); resetPlanche(); }}
                           className="px-1 py-0 hover:bg-gray-100 text-gray-500 text-[8px] leading-[14px] border-t border-gray-200">
                           <Icons.ArrowDown />
                         </button>
@@ -740,11 +781,11 @@ export default function App() {
               accept="application/pdf,.pdf,.tiff,.tif,.png,image/tiff,image/png"
               onChange={handleFileInput} />
           </label>
-          <button onClick={handleMonter} disabled={files.length === 0 || isCalculating}
+          <button onClick={handleMonter} disabled={files.length === 0 && !isCalculating}
             className={`flex-1 h-[60px] flex flex-col items-center justify-center border-2 rounded-lg transition-all
-            ${files.length > 0 && !isCalculating ? 'bg-green-600 border-green-700 text-white hover:bg-green-700 shadow-md transform hover:scale-[1.02] animate-pulse-fast' : 'bg-gray-200 border-gray-300 text-gray-400 cursor-not-allowed'}`}>
+            ${isCalculating ? 'bg-red-600 border-red-700 text-white hover:bg-red-700 shadow-md transform hover:scale-[1.02] animate-pulse-fast cursor-pointer' : files.length > 0 ? 'bg-green-600 border-green-700 text-white hover:bg-green-700 shadow-md transform hover:scale-[1.02] animate-pulse-fast' : 'bg-gray-200 border-gray-300 text-gray-400 cursor-not-allowed'}`}>
             {isCalculating ? <Icons.Loader size={18} /> : <Icons.Refresh />}
-            <span className="font-bold text-xs mt-1">{isCalculating ? 'Calcul...' : 'Monter'}</span>
+            <span className="font-bold text-xs mt-1">{isCalculating ? 'Arrêter' : 'Monter'}</span>
           </button>
         </div>
       </aside>
@@ -841,7 +882,7 @@ export default function App() {
         <div className="w-full flex justify-center border-b border-gray-300 bg-gray-200 py-2 z-20 flex-shrink-0">
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
-              <input type="checkbox" checked={allowRotation} onChange={e => setAllowRotation(e.target.checked)}
+              <input type="checkbox" checked={allowRotation} onChange={e => { setAllowRotation(e.target.checked); resetPlanche(); }}
                 className="w-4 h-4 accent-blue-600" />
               Autoriser la rotation
             </label>
@@ -855,7 +896,7 @@ export default function App() {
 
         {/* ── Zone preview ── */}
         <div ref={previewRef} className="flex-1 relative w-full overflow-hidden">
-          {/* Overlay horloge pendant calcul optimal */}
+          {/* Overlay horloge pendant calcul */}
           {(isOptimalRunning || isCalculating) && (
             <div className="absolute inset-0 z-30 flex flex-col items-center justify-center text-center pointer-events-none">
               <div className="animate-spin-slow text-green-800 mb-3">
@@ -866,9 +907,14 @@ export default function App() {
                   <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
                 </svg>
               </div>
-              {optimalProgress && (
+              {isOptimalRunning && optimalProgress && (
                 <div className="text-sm font-mono text-gray-700 bg-white bg-opacity-90 px-4 py-2 rounded shadow">
                   {optimalProgress}
+                </div>
+              )}
+              {isCalculating && !isOptimalRunning && (
+                <div className="text-sm font-mono text-gray-700 bg-white bg-opacity-90 px-4 py-2 rounded shadow">
+                  {calcProgress || 'Calcul en cours...'}
                 </div>
               )}
             </div>
@@ -902,11 +948,20 @@ export default function App() {
                 transformOrigin: 'top left',
               }}>
               <div className="w-full h-full relative overflow-hidden border border-gray-300">
-                {/* Fond vide */}
+                {/* Fond vide ou message d'erreur centré */}
                 {!currentSheet && (
-                  <div className="absolute inset-0 flex items-center justify-center text-gray-300 select-none"
-                    style={{ fontSize: `${Math.max(12, 16 / previewScale)}px` }}>
-                    {sheetSize.w} x {sheetSize.h} mm
+                  <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
+                    {impositionErrors.length > 0 ? (
+                      <div className="text-red-500 font-bold text-center px-4"
+                        style={{ fontSize: `${Math.max(14, 18 / previewScale)}px` }}>
+                        {impositionErrors.map((e, i) => <div key={i}>{e}</div>)}
+                      </div>
+                    ) : (
+                      <div className="text-gray-300"
+                        style={{ fontSize: `${Math.max(12, 16 / previewScale)}px` }}>
+                        {sheetSize.w} x {sheetSize.h} mm
+                      </div>
+                    )}
                   </div>
                 )}
                 {/* Items positionnes — structure identique à PMT */}
@@ -1043,16 +1098,68 @@ export default function App() {
                   {currentSheet.efficiency !== 'N/A' && <span>Remplissage: <strong>{currentSheet.efficiency}%</strong></span>}
                 </div>
               )}
-              {/* Erreurs imposition */}
-              {impositionErrors.length > 0 && (
-                <div className="text-sm text-red-500 font-bold mt-1">
-                  {impositionErrors.map((e, i) => <div key={i}>{e}</div>)}
-                </div>
-              )}
+              {/* Erreurs imposition — vide, affiché au centre de la planche */}
             </div>
           </div>
         </div>
       </main>
+
+      {/* ══════════════════════════════════════════════════════ */}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/*  MODAL VARIANTES IMBRICATION                          */}
+
+
+      {/* Fenetre choix variantes imbrication */}
+      {variantsChooser && (
+        <div className="fixed z-50" style={{ top: '50%', left: '440px', transform: 'translateY(-50%)' }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 text-center border-2 border-green-600" style={{ width: '320px' }}>
+            {variantsChooser.searching && (
+              <div className="text-sm text-blue-600 mb-2 italic">Je recherche d'autres placements...</div>
+            )}
+            <div className="text-lg font-bold text-green-700 mb-3">
+              {variantsChooser.variants.length} variante{variantsChooser.variants.length > 1 ? 's' : ''} trouvee{variantsChooser.variants.length > 1 ? 's' : ''}
+            </div>
+            {variantsChooser.variants.length > 1 && (
+              <div className="flex items-center justify-center gap-4 mb-4">
+                <button onClick={() => {
+                    const newIdx = Math.max(0, variantsChooser.currentIdx - 1);
+                    setVariantsChooser({ ...variantsChooser, currentIdx: newIdx });
+                    setSheets([{ id: newIdx + 1, items: variantsChooser.variants[newIdx].items, copies: variantsChooser.runs, efficiency: 'N/A' }]);
+                  }}
+                  disabled={variantsChooser.currentIdx === 0}
+                  className={`px-3 py-1 rounded text-lg font-bold ${variantsChooser.currentIdx === 0 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50'}`}>
+                  ◀
+                </button>
+                <span className="text-sm font-bold text-gray-700">
+                  Variante {variantsChooser.currentIdx + 1} / {variantsChooser.variants.length}
+                </span>
+                <button onClick={() => {
+                    const newIdx = Math.min(variantsChooser.variants.length - 1, variantsChooser.currentIdx + 1);
+                    setVariantsChooser({ ...variantsChooser, currentIdx: newIdx });
+                    setSheets([{ id: newIdx + 1, items: variantsChooser.variants[newIdx].items, copies: variantsChooser.runs, efficiency: 'N/A' }]);
+                  }}
+                  disabled={variantsChooser.currentIdx === variantsChooser.variants.length - 1}
+                  className={`px-3 py-1 rounded text-lg font-bold ${variantsChooser.currentIdx === variantsChooser.variants.length - 1 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50'}`}>
+                  ▶
+                </button>
+              </div>
+            )}
+            <div className="flex gap-3 justify-center">
+              {variantsChooser.searching && (
+                <button onClick={() => { calcStopRef.current = true; terminatePixelWorker(); }}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold text-sm">
+                  Arreter
+                </button>
+              )}
+              <button onClick={() => setVariantsChooser(null)}
+                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-sm">
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/*  MODAL TABLEAU COMPARATIF (optimal)                   */}
