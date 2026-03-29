@@ -52,6 +52,7 @@ export default function App() {
   const [currentSheetIndex, setCurrentSheetIndex] = useState(0);
   const [allowRotation, setAllowRotation] = useState(true);
   const [allowMove, setAllowMove] = useState(false);
+  const [autoCrop, setAutoCrop] = useState(true);
 
   // ── Modal optimal ──
   const [showOptimalModal, setShowOptimalModal] = useState(false);
@@ -67,6 +68,19 @@ export default function App() {
 
   const formats = PRODUCT_FORMATS[productMode] || {};
   const sheetSize = formats[selectedFormat] || { w: 575, h: 420 };
+
+  // ── Fermer le chooser de variantes dès qu'on fait une action ──
+  useEffect(() => {
+    if (variantsChooser) setVariantsChooser(null);
+  }, [files, selectedFormat, margin, impositionMode, allowRotation, isCalculating, showOptimalModal]);
+
+  // ── Rognage automatique des nouveaux fichiers à l'ouverture ──
+  useEffect(() => {
+    if (!autoCrop) return;
+    const uncropped = files.filter(f => !f.cropped);
+    if (uncropped.length === 0) return;
+    uncropped.forEach(f => cropFile(f.id));
+  }, [files, autoCrop]);
 
   // ── Upload d'un fichier vers /api/upload ──
   const uploadFile = async (file, current, total) => {
@@ -163,6 +177,37 @@ export default function App() {
   // ── Remettre la planche à zéro (sans toucher aux fichiers) ──
   const resetPlanche = () => { setSheets([]); setStats(null); setImpositionErrors([]); setCurrentSheetIndex(0); };
 
+  // ── Rogner un fichier (auto-crop via serveur ImageMagick) ──
+  const cropFile = useCallback(async (id, force = false) => {
+    const f = files.find(x => x.id === id);
+    if (!f || (!force && f.cropped)) return;
+    try {
+      console.log('[crop] Rognage de', f.name, '(id:', id, ')');
+      const resp = await fetch(`/api/upload/trim/${id}`);
+      if (!resp.ok) throw new Error(`Trim error ${resp.status}`);
+      const data = await resp.json();
+      console.log('[crop] Resultat:', data);
+      setFiles(p => p.map(ff => ff.id !== id ? ff : {
+        ...ff,
+        width: data.trimmed.width_mm,
+        height: data.trimmed.height_mm,
+        widthPx: data.pixels.cropW,
+        heightPx: data.pixels.cropH,
+        thumbnailUrl: data.thumbnail_url,
+        cropped: true,
+      }));
+      resetPlanche();
+    } catch (err) {
+      console.error('Erreur rognage:', err);
+      setFiles(p => p.map(ff => ff.id !== id ? ff : { ...ff, cropped: true }));
+    }
+  }, [files]);
+
+  // ── Rogner tous les fichiers (force = true pour re-rogner même si déjà fait) ──
+  const cropAll = useCallback(() => {
+    files.forEach(f => cropFile(f.id, true));
+  }, [files, cropFile]);
+
   // ── Tout effacer ──
   const clearAll = () => { setFiles([]); resetPlanche(); };
 
@@ -193,7 +238,7 @@ export default function App() {
         quantity: f.quantity,
         thumbnailUrl: f.thumbnailUrl,
       }));
-      const activeTab = allowMove ? 'compact' : (allowRotation ? 'default' : 'norotate');
+      const activeTab = allowRotation ? 'compact' : 'norotate';
       const result = await launchImposition({
         files: mappedFiles,
         sheetSize,
@@ -243,7 +288,7 @@ export default function App() {
   const handleRemplir = async () => {
     if (files.length !== 1) return;
     const f = files[0];
-    const activeTab = allowMove ? 'compact' : (allowRotation ? 'default' : 'norotate');
+    const activeTab = allowRotation ? 'compact' : 'norotate';
     const qty = fillPageWithImage({
       files: [{ ...f, width_mm: f.width, height_mm: f.height }],
       sheetSize,
@@ -669,10 +714,16 @@ export default function App() {
                 ${files.length === 1 ? 'text-blue-600 hover:text-blue-800 hover:bg-blue-50' : 'text-gray-300 cursor-not-allowed'}`}>
                 <Icons.Copy /> REMPLIR
               </button>
-              <button className={`text-xs flex items-center gap-1.5 font-bold px-2 py-1 rounded transition-colors
+              <button onClick={cropAll} disabled={files.length === 0}
+                className={`text-xs flex items-center gap-1.5 font-bold px-2 py-1 rounded transition-colors
                 ${files.length > 0 ? 'text-green-600 hover:text-green-800 hover:bg-green-50' : 'text-gray-300 cursor-not-allowed'}`}>
                 <Icons.Crop size={12} /> TOUT ROGNER
               </button>
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input type="checkbox" checked={autoCrop} onChange={e => setAutoCrop(e.target.checked)}
+                  className="w-3 h-3 accent-green-600" />
+                <span className="text-[10px] text-gray-500">Rogner a l&apos;ouverture</span>
+              </label>
             </div>
             <button onClick={clearAll}
               className={`text-xs flex items-center gap-1.5 font-bold px-2 py-1 rounded transition-colors
@@ -711,7 +762,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-gray-800 truncate">{f.name}</span>
                   <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                    <button className="text-gray-400 hover:text-green-600 transition-colors p-0.5">
+                    <button onClick={() => cropFile(f.id, true)} className="text-gray-400 hover:text-green-600 transition-colors p-0.5">
                       <Icons.Crop size={12} />
                     </button>
                     <button onClick={() => removeFile(f.id)}
@@ -886,7 +937,7 @@ export default function App() {
             <label className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
               <input type="checkbox" checked={allowMove} onChange={e => setAllowMove(e.target.checked)}
                 className="w-4 h-4 accent-orange-600" />
-              Deplacement et rotation autorises
+              cocher la case pour deplacer ou tourner les dessins (double clic)
             </label>
           </div>
         </div>
@@ -974,9 +1025,30 @@ export default function App() {
                         height: `${item.h}px`,
                         zIndex: 10,
                         backgroundColor: isImbrication ? 'transparent' : 'white',
-                      }}>
+                        cursor: allowMove ? 'move' : 'default',
+                      }}
+                      onMouseDown={allowMove ? (e) => {
+                        e.preventDefault();
+                        const startX = e.clientX, startY = e.clientY;
+                        const origX = item.x, origY = item.y;
+                        const onMove = (ev) => {
+                          const dx = (ev.clientX - startX) / previewScale;
+                          const dy = (ev.clientY - startY) / previewScale;
+                          setSheets(prev => prev.map((s, si) => si !== currentSheetIndex ? s : {
+                            ...s, items: s.items.map((it, ii) => ii !== idx ? it : { ...it, x: origX + dx, y: origY + dy })
+                          }));
+                        };
+                        const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                        document.addEventListener('mousemove', onMove);
+                        document.addEventListener('mouseup', onUp);
+                      } : undefined}
+                      onDoubleClick={allowMove ? () => {
+                        setSheets(prev => prev.map((s, si) => si !== currentSheetIndex ? s : {
+                          ...s, items: s.items.map((it, ii) => ii !== idx ? it : { ...it, rotated: !it.rotated, w: it.h, h: it.w })
+                        }));
+                      } : undefined}>
                       <div className="w-full h-full relative flex items-center justify-center">
-                        <div className={`flex items-center justify-center relative ${impositionMode === 'imbrique' ? 'border border-blue-300 border-dashed' : ''}`}
+                        <div className="flex items-center justify-center relative"
                           style={{
                             width: `${(item.rotated ? item.realH : item.realW) + margin * 2}px`,
                             height: `${(item.rotated ? item.realW : item.realH) + margin * 2}px`,
@@ -1241,12 +1313,10 @@ export default function App() {
                   </label>
                 </div>
 
-                {/* Textes info */}
-                <div className="mb-3 text-gray-500 space-y-0.5 text-center">
+                {/* Titre info */}
+                <div className="mb-3 text-center">
                   <div className="font-bold text-sm text-gray-700">Pour chaque type de montage, la solution la plus economique est en vert</div>
-                  <div className="text-xs">Le calcul d&apos;imbrication n&apos;est pas selectionne par defaut car il peut etre assez long suivant la complexite</div>
-                  <div className="text-xs italic">Les prix affiches sont extraits du tarif catalogue 2026</div>
-                  <div className="text-xs mt-1">Les montages peuvent paraitre non completement remplis, cela veut dire que vous pouvez augmenter certaines quantites sans modifier le nombre d&apos;exemplaires a imprimer</div>
+                  <div className="text-xs text-gray-500 italic">le classement est fait en fonction du tarif catalogue 2026</div>
                 </div>
 
                 {/* Tableau 3 colonnes */}
@@ -1264,7 +1334,7 @@ export default function App() {
                               ${isBestGlobal ? 'bg-green-200 text-green-900 font-bold ring-1 ring-green-400' : isBestMode ? 'bg-green-100 text-green-800 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}>
                             <span className="text-left">{isBestGlobal ? '\u2605\u2605' : isBestMode ? '\u2605' : ''} <b>{e.fmtName}</b></span>
                             <span className="text-center"><b>{e.nb}</b>f</span>
-                            <span className="text-right">{e.totalHT > 0 ? <span className="text-gray-500">{e.totalHT.toFixed(0)}\u20AC</span> : '\u2014'}</span>
+                            <span className="text-right">{e.totalHT > 0 ? <span className="text-gray-500">{e.totalHT.toFixed(0)}{'\u20AC'}</span> : '\u2014'}</span>
                           </div>
                         );
                       })}

@@ -683,6 +683,57 @@ router.post('/', upload.single('file'), async (req, res) => {
   }
 });
 
+// ── Endpoint trim (rognage) : rogne l'image, régénère la thumbnail, retourne les nouvelles dimensions ──
+router.get('/trim/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const jobDir = path.join(__dirname, '..', 'uploads', id);
+    if (!fs.existsSync(jobDir)) return res.status(404).json({ error: 'Fichier non trouvé' });
+
+    // Chercher l'image source (converted.png ou normalized.png)
+    const convertedPath = path.join(jobDir, 'converted.png');
+    const normalizedPath = path.join(jobDir, 'normalized.png');
+    const imgPath = fs.existsSync(convertedPath) ? convertedPath : normalizedPath;
+    if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Image non trouvée' });
+
+    // Lire le DPI avant le trim
+    const metaBefore = await sharp(imgPath).metadata();
+    const dpi = metaBefore.density || 300;
+
+    // Rogner l'image avec ImageMagick -trim +repage
+    execSync(`magick "${imgPath}" -trim +repage PNG32:"${imgPath}"`, { stdio: 'pipe' });
+    console.log(`[trim] Image rognée: ${imgPath}`);
+
+    // Lire les nouvelles dimensions après trim
+    const metaAfter = await sharp(imgPath).metadata();
+    const cropW = metaAfter.width;
+    const cropH = metaAfter.height;
+    const newWidthMm = Math.round((cropW / dpi) * 25.4 * 10) / 10;
+    const newHeightMm = Math.round((cropH / dpi) * 25.4 * 10) / 10;
+
+    // Régénérer la thumbnail rognée
+    const thumbnailPath = path.join(jobDir, 'thumbnail.png');
+    const thumbWidth = Math.round(cropW / 2);
+    const thumbHeight = Math.round(cropH / 2);
+    await sharp(imgPath)
+      .resize(thumbWidth, thumbHeight, { kernel: sharp.kernel.lanczos3, fit: 'fill' })
+      .withMetadata({ density: 150 })
+      .png({ compressionLevel: 6 })
+      .toFile(thumbnailPath + '.tmp');
+    fs.renameSync(thumbnailPath + '.tmp', thumbnailPath);
+    console.log(`[trim] Thumbnail régénérée: ${thumbnailPath}`);
+
+    res.json({
+      trimmed: { width_mm: newWidthMm, height_mm: newHeightMm },
+      pixels: { cropW, cropH },
+      thumbnail_url: `/uploads/${id}/thumbnail.png?t=${Date.now()}`,
+    });
+  } catch (err) {
+    console.error('Erreur trim:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Correction du nom de profil dans le chunk iCCP d'un fichier PNG
 // ImageMagick écrit "icc" au lieu du vrai nom du profil (ex: "eciRGB v2")
 function fixIccpProfileName(pngPath, newProfileName) {
