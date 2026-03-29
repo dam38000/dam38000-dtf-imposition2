@@ -20,6 +20,14 @@ app.use('/api/export', exportRoute);
 const saveImageRoute = require('./routes/save-image');
 app.use('/api/save-image', saveImageRoute);
 
+// En production, servir le build React
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, 'client', 'dist')));
+  app.get('/{*splat}', (req, res) => {
+    res.sendFile(path.join(__dirname, 'client', 'dist', 'index.html'));
+  });
+}
+
 // Démarrage du serveur
 app.listen(PORT, () => {
   console.log(`Serveur DTF démarré sur http://localhost:${PORT}`);
