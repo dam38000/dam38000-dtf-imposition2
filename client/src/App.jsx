@@ -326,8 +326,8 @@ export default function App() {
         for (const [fmtName, fmtDim] of validFmts) {
           if (optimalStopRef.current) break;
           const modeLabel = { massicot: 'Massicot', imbrique: 'Imbrique', imbrication: 'Imbrication' }[mode];
-          setOptimalProgress(`${modeLabel} / ${fmtName} — ${results.length} feuille${results.length > 1 ? 's' : ''}`);
-          const activeTab = 'default'; // avec rotation
+          setOptimalProgress(`${modeLabel} / ${fmtName} — ${results.length} resultat${results.length > 1 ? 's' : ''}`);
+          const activeTab = 'compact'; // teste toutes les combinaisons tri/orientation
           const tCalc = performance.now();
           try {
             console.log(`[optimal] >> ${mode} / ${fmtName} (${fmtDim.w}x${fmtDim.h})...`);
@@ -338,10 +338,7 @@ export default function App() {
               impositionMode: mode,
               activeTab,
               stopRef: optimalStopRef,
-              onLongCalc: (elapsed, run) => new Promise(resolve => {
-                const sec = Math.round(elapsed / 1000);
-                setLongCalcPrompt({ sec, run, resolve });
-              }),
+              onProgress: (msg) => setOptimalProgress(`${modeLabel} / ${fmtName} — ${msg}`),
             });
             const runs = result.stats?.totalSheets || 0;
             const dt = (performance.now() - tCalc).toFixed(0);
@@ -1000,16 +997,34 @@ export default function App() {
                     </div>
                   );
                 })}
-                {/* Contours rouges autour de chaque image */}
-                {currentSheet && (impositionMode === 'massicot' || impositionMode === 'imbrique') && currentSheet.items.map((item, idx) => (
-                  <div key={`contour-${idx}`} className="absolute pointer-events-none"
-                    style={{
-                      left: `${item.x}px`, top: `${item.y}px`,
-                      width: `${item.w}px`, height: `${item.h}px`,
-                      border: '0.5px solid #dc2626',
-                      zIndex: 15,
-                    }} />
-                ))}
+                {/* Contours rouges autour de chaque image — segments uniques pour éviter les doublons */}
+                {currentSheet && (impositionMode === 'massicot' || impositionMode === 'imbrique') && (() => {
+                  const items = currentSheet.items;
+                  const EPSILON = 0.3;
+                  // Collecter tous les segments horizontaux et verticaux
+                  const hSegs = new Set(); // "y|x1|x2"
+                  const vSegs = new Set(); // "x|y1|y2"
+                  items.forEach(item => {
+                    const x1 = Math.round(item.x * 10) / 10;
+                    const y1 = Math.round(item.y * 10) / 10;
+                    const x2 = Math.round((item.x + item.w) * 10) / 10;
+                    const y2 = Math.round((item.y + item.h) * 10) / 10;
+                    hSegs.add(`${y1}|${x1}|${x2}`); // haut
+                    hSegs.add(`${y2}|${x1}|${x2}`); // bas
+                    vSegs.add(`${x1}|${y1}|${y2}`); // gauche
+                    vSegs.add(`${x2}|${y1}|${y2}`); // droite
+                  });
+                  const lines = [];
+                  hSegs.forEach(seg => {
+                    const [y, x1, x2] = seg.split('|').map(Number);
+                    lines.push(<div key={`hc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x1}px`, top: `${y}px`, width: `${x2 - x1}px`, height: 0, borderTop: '0.5px solid #dc2626', zIndex: 15 }} />);
+                  });
+                  vSegs.forEach(seg => {
+                    const [x, y1, y2] = seg.split('|').map(Number);
+                    lines.push(<div key={`vc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x}px`, top: `${y1}px`, width: 0, height: `${y2 - y1}px`, borderLeft: '0.5px solid #dc2626', zIndex: 15 }} />);
+                  });
+                  return lines;
+                })()}
                 {/* Lames de massicot en bleu — coupes traversantes réelles */}
                 {currentSheet && impositionMode === 'massicot' && (() => {
                   const items = currentSheet.items;
