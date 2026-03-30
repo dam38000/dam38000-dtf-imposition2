@@ -640,7 +640,7 @@ export default function App() {
       const resp = await fetch('/api/export/coupe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin }),
+        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin, mode: impositionMode }),
       });
       if (!resp.ok) throw new Error(await resp.text());
       const blob = await resp.blob();
@@ -670,7 +670,7 @@ export default function App() {
       const resp = await fetch('/api/export/composite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin }),
+        body: JSON.stringify({ sheet_size: sheetSize, items: exportItems, margin, mode: impositionMode }),
       });
       if (!resp.ok) throw new Error(await resp.text());
       const blob = await resp.blob();
@@ -1133,106 +1133,70 @@ export default function App() {
                     </div>
                   );
                 })}
-                {/* Contours rouges autour de chaque image — segments uniques pour éviter les doublons */}
+                {/* Contours rouges — bordure au bord de chaque cellule, se superposent entre adjacents */}
                 {currentSheet && (impositionMode === 'massicot' || impositionMode === 'imbrique') && (() => {
                   const items = currentSheet.items;
-                  const EPSILON = 0.3;
-                  // Collecter tous les segments horizontaux et verticaux
-                  const hSegs = new Set(); // "y|x1|x2"
-                  const vSegs = new Set(); // "x|y1|y2"
+                  const hSegs = new Set();
+                  const vSegs = new Set();
                   items.forEach(item => {
                     const x1 = Math.round(item.x * 10) / 10;
                     const y1 = Math.round(item.y * 10) / 10;
                     const x2 = Math.round((item.x + item.w) * 10) / 10;
                     const y2 = Math.round((item.y + item.h) * 10) / 10;
-                    hSegs.add(`${y1}|${x1}|${x2}`); // haut
-                    hSegs.add(`${y2}|${x1}|${x2}`); // bas
-                    vSegs.add(`${x1}|${y1}|${y2}`); // gauche
-                    vSegs.add(`${x2}|${y1}|${y2}`); // droite
+                    hSegs.add(`${y1}|${x1}|${x2}`);
+                    hSegs.add(`${y2}|${x1}|${x2}`);
+                    vSegs.add(`${x1}|${y1}|${y2}`);
+                    vSegs.add(`${x2}|${y1}|${y2}`);
                   });
                   const lines = [];
                   hSegs.forEach(seg => {
                     const [y, x1, x2] = seg.split('|').map(Number);
-                    lines.push(<div key={`hc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x1}px`, top: `${y}px`, width: `${x2 - x1}px`, height: 0, borderTop: '0.5px solid #dc2626', zIndex: 15 }} />);
+                    lines.push(<div key={`hc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x1}px`, top: `${y}px`, width: `${x2 - x1}px`, height: 0, borderTop: '1px solid #dc2626', zIndex: 15 }} />);
                   });
                   vSegs.forEach(seg => {
                     const [x, y1, y2] = seg.split('|').map(Number);
-                    lines.push(<div key={`vc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x}px`, top: `${y1}px`, width: 0, height: `${y2 - y1}px`, borderLeft: '0.5px solid #dc2626', zIndex: 15 }} />);
+                    lines.push(<div key={`vc-${seg}`} className="absolute pointer-events-none" style={{ left: `${x}px`, top: `${y1}px`, width: 0, height: `${y2 - y1}px`, borderLeft: '1px solid #dc2626', zIndex: 15 }} />);
                   });
                   return lines;
                 })()}
-                {/* Lames de massicot en bleu — coupes traversantes réelles */}
+                {/* Lame de massicot en bleu — première coupe traversante (massicot uniquement) */}
                 {currentSheet && impositionMode === 'massicot' && (() => {
                   const items = currentSheet.items;
                   const EPSILON = 0.5;
                   const W = sheetSize.w;
                   const H = sheetSize.h;
 
-                  // Collecter toutes les coordonnées Y et X des bords d'images
+                  // Chercher les coupes horizontales traversant toute la largeur
                   const allY = new Set();
-                  const allX = new Set();
                   items.forEach(item => {
                     allY.add(Math.round(item.y * 10) / 10);
                     allY.add(Math.round((item.y + item.h) * 10) / 10);
-                    allX.add(Math.round(item.x * 10) / 10);
-                    allX.add(Math.round((item.x + item.w) * 10) / 10);
                   });
-
-                  // Coupes horizontales : un Y est une lame valide si la ligne traverse
-                  // toute la largeur sans couper à l'intérieur d'une image
                   const hCuts = Array.from(allY).filter(y => {
                     if (y <= EPSILON || y >= H - EPSILON) return false;
-                    // Vérifier qu'aucune image n'est coupée verticalement par cette ligne
                     return !items.some(item => y > item.y + EPSILON && y < item.y + item.h - EPSILON);
                   });
 
-                  // Coupes verticales par bande : après les coupes horizontales, on a des bandes
-                  // Pour chaque bande, trouver les coupes verticales valides
-                  const sortedH = [0, ...hCuts.sort((a, b) => a - b), H];
-                  const vCutSegments = [];
-
-                  for (let bi = 0; bi < sortedH.length - 1; bi++) {
-                    const bandTop = sortedH[bi];
-                    const bandBot = sortedH[bi + 1];
-                    // Items dans cette bande
-                    const bandItems = items.filter(item =>
-                      item.y >= bandTop - EPSILON && item.y + item.h <= bandBot + EPSILON
-                    );
-                    if (bandItems.length === 0) continue;
-
-                    // Collecter les X de cette bande
-                    const bandX = new Set();
-                    bandItems.forEach(item => {
-                      bandX.add(Math.round(item.x * 10) / 10);
-                      bandX.add(Math.round((item.x + item.w) * 10) / 10);
-                    });
-
-                    // Filtrer : X valide si ne coupe aucune image de la bande
-                    Array.from(bandX).forEach(x => {
-                      if (x <= EPSILON || x >= W - EPSILON) return;
-                      const cutsImage = bandItems.some(item => x > item.x + EPSILON && x < item.x + item.w - EPSILON);
-                      if (!cutsImage) {
-                        vCutSegments.push({ x, top: bandTop, bottom: bandBot });
-                      }
-                    });
-                  }
+                  // Chercher les coupes verticales traversant toute la hauteur
+                  const allX = new Set();
+                  items.forEach(item => {
+                    allX.add(Math.round(item.x * 10) / 10);
+                    allX.add(Math.round((item.x + item.w) * 10) / 10);
+                  });
+                  const vCuts = Array.from(allX).filter(x => {
+                    if (x <= EPSILON || x >= W - EPSILON) return false;
+                    return !items.some(item => x > item.x + EPSILON && x < item.x + item.w - EPSILON);
+                  });
 
                   return (
-                    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 4 }}>
-                      {/* Coupes horizontales traversantes */}
-                      {hCuts.map(y => (
-                        <div key={`hcut-${y}`} className="absolute left-0 right-0"
+                    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 16 }}>
+                      {hCuts.map((y, i) => (
+                        <div key={`hcut-${i}`} className="absolute left-0 right-0"
                           style={{ top: `${y}px`, borderTop: '1px solid #2563eb' }} />
                       ))}
-                      {/* Coupes verticales par bande */}
-                      {vCutSegments.map((seg, i) => (
-                        <div key={`vcut-${i}`} className="absolute"
-                          style={{
-                            left: `${seg.x}px`,
-                            top: `${seg.top}px`,
-                            height: `${seg.bottom - seg.top}px`,
-                            borderLeft: '1px solid #2563eb',
-                          }} />
+                      {vCuts.map((x, i) => (
+                        <div key={`vcut-${i}`} className="absolute top-0 bottom-0"
+                          style={{ left: `${x}px`, borderLeft: '1px solid #2563eb' }} />
                       ))}
                     </div>
                   );

@@ -105,12 +105,75 @@ router.post('/coupe', async (req, res) => {
       format: [sheet_size.w, sheet_size.h],
     });
 
-    // Trait rouge autour de chaque image
-    doc.setDrawColor(255, 0, 0);
-    doc.setLineWidth(0.1);
+    // Recalculer les coordonnées de cellule (item.x/y sont le coin de l'image, la cellule inclut la marge)
+    const cells = items.map(item => ({
+      x: item.x - margin,
+      y: item.y - margin,
+      w: item.realW + 2 * margin,
+      h: item.realH + 2 * margin,
+    }));
 
-    for (const item of items) {
-      doc.rect(item.x, item.y, item.realW, item.realH, 'S');
+    // 1. Traits rouges — bordure au bord de chaque cellule (se superposent entre adjacents)
+    doc.setDrawColor(220, 38, 38); // #dc2626
+    doc.setLineWidth(0.15);
+    for (const cell of cells) {
+      doc.rect(cell.x, cell.y, cell.w, cell.h, 'S');
+    }
+
+    // 2. Traits bleus — coupes massicot récursives (uniquement en mode massicot)
+    if (mode === 'massicot') {
+      const EPSILON = 0.5;
+      const cuts = [];
+
+      const findCuts = (zone, zoneItems) => {
+        if (zoneItems.length <= 1) return;
+        const candidatesY = new Set();
+        const candidatesX = new Set();
+        zoneItems.forEach(c => {
+          candidatesY.add(Math.round(c.y * 10) / 10);
+          candidatesY.add(Math.round((c.y + c.h) * 10) / 10);
+          candidatesX.add(Math.round(c.x * 10) / 10);
+          candidatesX.add(Math.round((c.x + c.w) * 10) / 10);
+        });
+        const hValid = Array.from(candidatesY).filter(y => {
+          if (y <= zone.top + EPSILON || y >= zone.bottom - EPSILON) return false;
+          return !zoneItems.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
+        }).sort((a, b) => a - b);
+        const vValid = Array.from(candidatesX).filter(x => {
+          if (x <= zone.left + EPSILON || x >= zone.right - EPSILON) return false;
+          return !zoneItems.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
+        }).sort((a, b) => a - b);
+
+        if (hValid.length > 0) {
+          hValid.forEach(y => cuts.push({ type: 'h', pos: y, left: zone.left, right: zone.right }));
+          const bands = [zone.top, ...hValid, zone.bottom];
+          for (let i = 0; i < bands.length - 1; i++) {
+            const sub = { left: zone.left, right: zone.right, top: bands[i], bottom: bands[i + 1] };
+            const subItems = zoneItems.filter(c => c.y >= sub.top - EPSILON && c.y + c.h <= sub.bottom + EPSILON);
+            if (subItems.length > 1) findCuts(sub, subItems);
+          }
+          return;
+        }
+        if (vValid.length > 0) {
+          vValid.forEach(x => cuts.push({ type: 'v', pos: x, top: zone.top, bottom: zone.bottom }));
+          const cols = [zone.left, ...vValid, zone.right];
+          for (let i = 0; i < cols.length - 1; i++) {
+            const sub = { left: cols[i], right: cols[i + 1], top: zone.top, bottom: zone.bottom };
+            const subItems = zoneItems.filter(c => c.x >= sub.left - EPSILON && c.x + c.w <= sub.right + EPSILON);
+            if (subItems.length > 1) findCuts(sub, subItems);
+          }
+          return;
+        }
+      };
+
+      findCuts({ left: 0, top: 0, right: sheet_size.w, bottom: sheet_size.h }, cells);
+
+      doc.setDrawColor(37, 99, 235); // #2563eb
+      doc.setLineWidth(0.2);
+      cuts.forEach(cut => {
+        if (cut.type === 'h') doc.line(cut.left, cut.pos, cut.right, cut.pos);
+        else doc.line(cut.pos, cut.top, cut.pos, cut.bottom);
+      });
     }
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
@@ -176,22 +239,74 @@ router.post('/composite', async (req, res) => {
       doc.addImage(dataUrl, 'PNG', item.x, item.y, item.realW, item.realH);
     }
 
-    // 2. Dessiner les traits de coupe par-dessus
-    doc.setDrawColor(255, 0, 0);
-    doc.setLineWidth(0.1);
+    // 2. Traits rouges — bordure au bord de chaque cellule
+    const cells = items.map(item => ({
+      x: item.x - margin,
+      y: item.y - margin,
+      w: item.realW + 2 * margin,
+      h: item.realH + 2 * margin,
+    }));
 
-    for (const item of items) {
-      const rx = item.x - margin;
-      const ry = item.y - margin;
-      let rw, rh;
-      if (item.rotated) {
-        rw = item.realW + 2 * margin;
-        rh = item.realH + 2 * margin;
-      } else {
-        rw = item.realW + 2 * margin;
-        rh = item.realH + 2 * margin;
-      }
-      doc.rect(rx, ry, rw, rh, 'S');
+    doc.setDrawColor(220, 38, 38); // #dc2626
+    doc.setLineWidth(0.15);
+    for (const cell of cells) {
+      doc.rect(cell.x, cell.y, cell.w, cell.h, 'S');
+    }
+
+    // 3. Traits bleus — coupes massicot récursives (uniquement en mode massicot)
+    if (mode === 'massicot') {
+      const EPSILON = 0.5;
+      const cuts = [];
+
+      const findCuts = (zone, zoneItems) => {
+        if (zoneItems.length <= 1) return;
+        const candidatesY = new Set();
+        const candidatesX = new Set();
+        zoneItems.forEach(c => {
+          candidatesY.add(Math.round(c.y * 10) / 10);
+          candidatesY.add(Math.round((c.y + c.h) * 10) / 10);
+          candidatesX.add(Math.round(c.x * 10) / 10);
+          candidatesX.add(Math.round((c.x + c.w) * 10) / 10);
+        });
+        const hValid = Array.from(candidatesY).filter(y => {
+          if (y <= zone.top + EPSILON || y >= zone.bottom - EPSILON) return false;
+          return !zoneItems.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
+        }).sort((a, b) => a - b);
+        const vValid = Array.from(candidatesX).filter(x => {
+          if (x <= zone.left + EPSILON || x >= zone.right - EPSILON) return false;
+          return !zoneItems.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
+        }).sort((a, b) => a - b);
+
+        if (hValid.length > 0) {
+          hValid.forEach(y => cuts.push({ type: 'h', pos: y, left: zone.left, right: zone.right }));
+          const bands = [zone.top, ...hValid, zone.bottom];
+          for (let i = 0; i < bands.length - 1; i++) {
+            const sub = { left: zone.left, right: zone.right, top: bands[i], bottom: bands[i + 1] };
+            const subItems = zoneItems.filter(c => c.y >= sub.top - EPSILON && c.y + c.h <= sub.bottom + EPSILON);
+            if (subItems.length > 1) findCuts(sub, subItems);
+          }
+          return;
+        }
+        if (vValid.length > 0) {
+          vValid.forEach(x => cuts.push({ type: 'v', pos: x, top: zone.top, bottom: zone.bottom }));
+          const cols = [zone.left, ...vValid, zone.right];
+          for (let i = 0; i < cols.length - 1; i++) {
+            const sub = { left: cols[i], right: cols[i + 1], top: zone.top, bottom: zone.bottom };
+            const subItems = zoneItems.filter(c => c.x >= sub.left - EPSILON && c.x + c.w <= sub.right + EPSILON);
+            if (subItems.length > 1) findCuts(sub, subItems);
+          }
+          return;
+        }
+      };
+
+      findCuts({ left: 0, top: 0, right: sheet_size.w, bottom: sheet_size.h }, cells);
+
+      doc.setDrawColor(37, 99, 235); // #2563eb
+      doc.setLineWidth(0.2);
+      cuts.forEach(cut => {
+        if (cut.type === 'h') doc.line(cut.left, cut.pos, cut.right, cut.pos);
+        else doc.line(cut.pos, cut.top, cut.pos, cut.bottom);
+      });
     }
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
