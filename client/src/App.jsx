@@ -77,6 +77,7 @@ export default function App() {
 
   // ── Alerte erreur ──
   const [errorAlert, setErrorAlert] = useState(null); // { title, message, solution }
+  const [quantityWarning, setQuantityWarning] = useState(null); // { totalQty, action }
 
   const formats = PRODUCT_FORMATS[productMode] || {};
   const sheetSize = formats[selectedFormat] || { w: 575, h: 420 };
@@ -230,7 +231,7 @@ export default function App() {
   const clearAll = () => { setFiles([]); resetPlanche(); };
 
   // ── Lancer l'imposition ──
-  const handleMonter = async () => {
+  const handleMonter = async (force = false) => {
     // Si calcul en cours → arrêter
     if (isCalculating) {
       calcStopRef.current = true;
@@ -239,11 +240,13 @@ export default function App() {
       return;
     }
     if (files.length === 0) return;
-    // Protection : limite quantité totale
-    const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
-    if (totalQty > MAX_QUANTITY) {
-      setErrorAlert({ title: 'Quantite trop elevee', message: `Vous avez demande ${totalQty} images au total. Le maximum autorise pour votre ordinateur est de ${MAX_QUANTITY}.`, solution: 'Reduisez les quantites pour lancer le calcul.' });
-      return;
+    // Protection : avertissement si quantité élevée
+    if (!force) {
+      const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
+      if (totalQty > MAX_QUANTITY) {
+        setQuantityWarning({ totalQty, action: 'monter' });
+        return;
+      }
     }
     calcStopRef.current = false;
     setIsCalculating(true);
@@ -357,12 +360,14 @@ export default function App() {
   };
 
   // ── Lancer le calcul optimal (toutes combinaisons modes x formats) ──
-  const launchOptimal = async () => {
+  const launchOptimal = async (force = false) => {
     if (files.length === 0) return;
-    const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
-    if (totalQty > MAX_QUANTITY) {
-      setErrorAlert({ title: 'Quantite trop elevee', message: `Vous avez demande ${totalQty} images au total. Le maximum autorise pour votre ordinateur est de ${MAX_QUANTITY}.`, solution: 'Reduisez les quantites pour lancer le calcul.' });
-      return;
+    if (!force) {
+      const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
+      if (totalQty > MAX_QUANTITY) {
+        setQuantityWarning({ totalQty, action: 'optimal' });
+        return;
+      }
     }
     const fmts = PRODUCT_FORMATS[productMode];
     const table = PRIX_TABLES[productMode];
@@ -830,10 +835,10 @@ export default function App() {
                   <div className="flex-1">
                     <div className="text-[10px] font-bold text-gray-500 uppercase">Qte</div>
                     <div className="flex items-center border border-gray-200 rounded bg-white">
-                      <input type="number" value={f.quantity} min="0" max={MAX_QUANTITY}
+                      <input type="number" value={f.quantity} min="0"
                         onFocus={e => e.target.select()}
                         onChange={e => {
-                          const v = Math.min(MAX_QUANTITY, Math.abs(parseInt(e.target.value)) || 0);
+                          const v = Math.abs(parseInt(e.target.value)) || 0;
                           setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: v } : ff));
                           resetPlanche();
                         }}
@@ -1428,6 +1433,39 @@ export default function App() {
             <div className="text-xl font-bold mb-2">{uploadStatus.step}</div>
             <div className="text-base text-gray-300 mb-1">{uploadStatus.fileName}</div>
             <div className="text-sm text-gray-500">Fichier {uploadStatus.current} / {uploadStatus.total}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Avertissement quantité élevée ── */}
+      {quantityWarning && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md mx-4 border-2 border-orange-400">
+            <div className="flex items-center gap-2 mb-3">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <h3 className="text-lg font-bold text-orange-700">Nombre &eacute;lev&eacute; de transferts command&eacute;s : {quantityWarning.totalQty}</h3>
+            </div>
+            <p className="text-sm text-gray-700 mb-3">Nous vous recommandons de ne pas d&eacute;passer {MAX_QUANTITY} pi&egrave;ces au total.</p>
+            <p className="text-sm text-gray-700 mb-4 font-medium">Voulez-vous lancer n&eacute;anmoins le calcul ?</p>
+            <div className="flex justify-center gap-3">
+              <button onClick={() => {
+                setQuantityWarning(null);
+                if (quantityWarning.action === 'monter') {
+                  handleMonter(true);
+                } else {
+                  launchOptimal(true);
+                }
+              }}
+                className="px-5 py-2 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition-colors">
+                Oui
+              </button>
+              <button onClick={() => setQuantityWarning(null)}
+                className="px-5 py-2 bg-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-300 transition-colors">
+                Je modifie ma demande
+              </button>
+            </div>
           </div>
         </div>
       )}
