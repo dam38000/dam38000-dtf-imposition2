@@ -1188,16 +1188,20 @@ export default function App() {
                     return !items.some(item => x > item.x + EPSILON && x < item.x + item.w - EPSILON);
                   });
 
+                  // Prendre une seule coupe : la première horizontale, sinon la première verticale
+                  const firstH = hCuts.length > 0 ? Math.min(...hCuts) : null;
+                  const firstV = firstH === null && vCuts.length > 0 ? Math.min(...vCuts) : null;
+
                   return (
                     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 16 }}>
-                      {hCuts.map((y, i) => (
-                        <div key={`hcut-${i}`} className="absolute left-0 right-0"
-                          style={{ top: `${y}px`, borderTop: '1px solid #2563eb' }} />
-                      ))}
-                      {vCuts.map((x, i) => (
-                        <div key={`vcut-${i}`} className="absolute top-0 bottom-0"
-                          style={{ left: `${x}px`, borderLeft: '1px solid #2563eb' }} />
-                      ))}
+                      {firstH !== null && (
+                        <div className="absolute left-0 right-0"
+                          style={{ top: `${firstH}px`, borderTop: '1px solid #2563eb' }} />
+                      )}
+                      {firstV !== null && (
+                        <div className="absolute top-0 bottom-0"
+                          style={{ left: `${firstV}px`, borderLeft: '1px solid #2563eb' }} />
+                      )}
                     </div>
                   );
                 })()}

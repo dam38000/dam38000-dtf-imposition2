@@ -120,60 +120,37 @@ router.post('/coupe', async (req, res) => {
       doc.rect(cell.x, cell.y, cell.w, cell.h, 'S');
     }
 
-    // 2. Traits bleus — coupes massicot récursives (uniquement en mode massicot)
+    // 2. Trait bleu — première coupe massicot traversant toute la feuille
     if (mode === 'massicot') {
       const EPSILON = 0.5;
-      const cuts = [];
+      const W = sheet_size.w;
+      const H = sheet_size.h;
 
-      const findCuts = (zone, zoneItems) => {
-        if (zoneItems.length <= 1) return;
-        const candidatesY = new Set();
-        const candidatesX = new Set();
-        zoneItems.forEach(c => {
-          candidatesY.add(Math.round(c.y * 10) / 10);
-          candidatesY.add(Math.round((c.y + c.h) * 10) / 10);
-          candidatesX.add(Math.round(c.x * 10) / 10);
-          candidatesX.add(Math.round((c.x + c.w) * 10) / 10);
-        });
-        const hValid = Array.from(candidatesY).filter(y => {
-          if (y <= zone.top + EPSILON || y >= zone.bottom - EPSILON) return false;
-          return !zoneItems.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
-        }).sort((a, b) => a - b);
-        const vValid = Array.from(candidatesX).filter(x => {
-          if (x <= zone.left + EPSILON || x >= zone.right - EPSILON) return false;
-          return !zoneItems.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
-        }).sort((a, b) => a - b);
+      const allY = new Set();
+      const allX = new Set();
+      cells.forEach(c => {
+        allY.add(Math.round(c.y * 10) / 10);
+        allY.add(Math.round((c.y + c.h) * 10) / 10);
+        allX.add(Math.round(c.x * 10) / 10);
+        allX.add(Math.round((c.x + c.w) * 10) / 10);
+      });
 
-        if (hValid.length > 0) {
-          hValid.forEach(y => cuts.push({ type: 'h', pos: y, left: zone.left, right: zone.right }));
-          const bands = [zone.top, ...hValid, zone.bottom];
-          for (let i = 0; i < bands.length - 1; i++) {
-            const sub = { left: zone.left, right: zone.right, top: bands[i], bottom: bands[i + 1] };
-            const subItems = zoneItems.filter(c => c.y >= sub.top - EPSILON && c.y + c.h <= sub.bottom + EPSILON);
-            if (subItems.length > 1) findCuts(sub, subItems);
-          }
-          return;
-        }
-        if (vValid.length > 0) {
-          vValid.forEach(x => cuts.push({ type: 'v', pos: x, top: zone.top, bottom: zone.bottom }));
-          const cols = [zone.left, ...vValid, zone.right];
-          for (let i = 0; i < cols.length - 1; i++) {
-            const sub = { left: cols[i], right: cols[i + 1], top: zone.top, bottom: zone.bottom };
-            const subItems = zoneItems.filter(c => c.x >= sub.left - EPSILON && c.x + c.w <= sub.right + EPSILON);
-            if (subItems.length > 1) findCuts(sub, subItems);
-          }
-          return;
-        }
-      };
+      const hCuts = Array.from(allY).filter(y => {
+        if (y <= EPSILON || y >= H - EPSILON) return false;
+        return !cells.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
+      });
+      const vCuts = Array.from(allX).filter(x => {
+        if (x <= EPSILON || x >= W - EPSILON) return false;
+        return !cells.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
+      });
 
-      findCuts({ left: 0, top: 0, right: sheet_size.w, bottom: sheet_size.h }, cells);
+      const firstH = hCuts.length > 0 ? Math.min(...hCuts) : null;
+      const firstV = firstH === null && vCuts.length > 0 ? Math.min(...vCuts) : null;
 
       doc.setDrawColor(37, 99, 235); // #2563eb
       doc.setLineWidth(0.2);
-      cuts.forEach(cut => {
-        if (cut.type === 'h') doc.line(cut.left, cut.pos, cut.right, cut.pos);
-        else doc.line(cut.pos, cut.top, cut.pos, cut.bottom);
-      });
+      if (firstH !== null) doc.line(0, firstH, W, firstH);
+      if (firstV !== null) doc.line(firstV, 0, firstV, H);
     }
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
@@ -253,60 +230,37 @@ router.post('/composite', async (req, res) => {
       doc.rect(cell.x, cell.y, cell.w, cell.h, 'S');
     }
 
-    // 3. Traits bleus — coupes massicot récursives (uniquement en mode massicot)
+    // 3. Trait bleu — première coupe massicot traversant toute la feuille
     if (mode === 'massicot') {
       const EPSILON = 0.5;
-      const cuts = [];
+      const W = sheet_size.w;
+      const H = sheet_size.h;
 
-      const findCuts = (zone, zoneItems) => {
-        if (zoneItems.length <= 1) return;
-        const candidatesY = new Set();
-        const candidatesX = new Set();
-        zoneItems.forEach(c => {
-          candidatesY.add(Math.round(c.y * 10) / 10);
-          candidatesY.add(Math.round((c.y + c.h) * 10) / 10);
-          candidatesX.add(Math.round(c.x * 10) / 10);
-          candidatesX.add(Math.round((c.x + c.w) * 10) / 10);
-        });
-        const hValid = Array.from(candidatesY).filter(y => {
-          if (y <= zone.top + EPSILON || y >= zone.bottom - EPSILON) return false;
-          return !zoneItems.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
-        }).sort((a, b) => a - b);
-        const vValid = Array.from(candidatesX).filter(x => {
-          if (x <= zone.left + EPSILON || x >= zone.right - EPSILON) return false;
-          return !zoneItems.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
-        }).sort((a, b) => a - b);
+      const allY = new Set();
+      const allX = new Set();
+      cells.forEach(c => {
+        allY.add(Math.round(c.y * 10) / 10);
+        allY.add(Math.round((c.y + c.h) * 10) / 10);
+        allX.add(Math.round(c.x * 10) / 10);
+        allX.add(Math.round((c.x + c.w) * 10) / 10);
+      });
 
-        if (hValid.length > 0) {
-          hValid.forEach(y => cuts.push({ type: 'h', pos: y, left: zone.left, right: zone.right }));
-          const bands = [zone.top, ...hValid, zone.bottom];
-          for (let i = 0; i < bands.length - 1; i++) {
-            const sub = { left: zone.left, right: zone.right, top: bands[i], bottom: bands[i + 1] };
-            const subItems = zoneItems.filter(c => c.y >= sub.top - EPSILON && c.y + c.h <= sub.bottom + EPSILON);
-            if (subItems.length > 1) findCuts(sub, subItems);
-          }
-          return;
-        }
-        if (vValid.length > 0) {
-          vValid.forEach(x => cuts.push({ type: 'v', pos: x, top: zone.top, bottom: zone.bottom }));
-          const cols = [zone.left, ...vValid, zone.right];
-          for (let i = 0; i < cols.length - 1; i++) {
-            const sub = { left: cols[i], right: cols[i + 1], top: zone.top, bottom: zone.bottom };
-            const subItems = zoneItems.filter(c => c.x >= sub.left - EPSILON && c.x + c.w <= sub.right + EPSILON);
-            if (subItems.length > 1) findCuts(sub, subItems);
-          }
-          return;
-        }
-      };
+      const hCuts = Array.from(allY).filter(y => {
+        if (y <= EPSILON || y >= H - EPSILON) return false;
+        return !cells.some(c => y > c.y + EPSILON && y < c.y + c.h - EPSILON);
+      });
+      const vCuts = Array.from(allX).filter(x => {
+        if (x <= EPSILON || x >= W - EPSILON) return false;
+        return !cells.some(c => x > c.x + EPSILON && x < c.x + c.w - EPSILON);
+      });
 
-      findCuts({ left: 0, top: 0, right: sheet_size.w, bottom: sheet_size.h }, cells);
+      const firstH = hCuts.length > 0 ? Math.min(...hCuts) : null;
+      const firstV = firstH === null && vCuts.length > 0 ? Math.min(...vCuts) : null;
 
       doc.setDrawColor(37, 99, 235); // #2563eb
       doc.setLineWidth(0.2);
-      cuts.forEach(cut => {
-        if (cut.type === 'h') doc.line(cut.left, cut.pos, cut.right, cut.pos);
-        else doc.line(cut.pos, cut.top, cut.pos, cut.bottom);
-      });
+      if (firstH !== null) doc.line(0, firstH, W, firstH);
+      if (firstV !== null) doc.line(firstV, 0, firstV, H);
     }
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
