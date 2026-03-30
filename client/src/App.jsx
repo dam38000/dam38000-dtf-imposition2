@@ -255,6 +255,13 @@ export default function App() {
     setStats(null);
     setImpositionErrors([]);
     setCurrentSheetIndex(0);
+    // Timeout de sécurité : 60 secondes
+    const calcTimeout = setTimeout(() => {
+      calcStopRef.current = true;
+      terminatePixelWorker();
+      setIsCalculating(false);
+      setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul a d\u00e9pass\u00e9 60 secondes et a \u00e9t\u00e9 interrompu.', solution: 'R\u00e9duisez les quantit\u00e9s ou utilisez un format plus grand. Si le probl\u00e8me persiste, contactez Printmytransfer au 04 76 36 61 15.' });
+    }, 60000);
     try {
       // Mapper les fichiers pour l'API imposition.js
       const mappedFiles = files.map(f => ({
@@ -315,6 +322,7 @@ export default function App() {
       }
       setImpositionErrors([]);
     } finally {
+      clearTimeout(calcTimeout);
       setIsCalculating(false);
     }
   };
@@ -398,6 +406,14 @@ export default function App() {
     setIsOptimalRunning(true);
     setOptimalPanel([]);
     setOptimalProgress('Demarrage...');
+    // Timeout de sécurité : 120 secondes pour l'optimal (teste plusieurs combinaisons)
+    const optimalTimeout = setTimeout(() => {
+      optimalStopRef.current = true;
+      terminatePixelWorker();
+      setIsOptimalRunning(false);
+      setOptimalProgress('');
+      setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul optimal a d\u00e9pass\u00e9 2 minutes et a \u00e9t\u00e9 interrompu.', solution: 'R\u00e9duisez les quantit\u00e9s ou d\u00e9s\u00e9lectionnez le mode Imbrication. Si le probl\u00e8me persiste, contactez Printmytransfer au 04 76 36 61 15.' });
+    }, 120000);
 
     const mappedFiles = files.map(f => ({
       id: f.id, name: f.name, width_mm: f.width, height_mm: f.height,
@@ -474,6 +490,7 @@ export default function App() {
       console.error('[optimal] ERREUR GLOBALE:', err);
       setErrorAlert({ title: 'Erreur calcul optimal', message: err.message || String(err), solution: 'Reduisez les quantites ou deselectionnez le mode Imbrication. Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
     } finally {
+      clearTimeout(optimalTimeout);
       const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
       console.log(`[optimal] TERMINE — ${results.length} resultats en ${totalTime}s`);
       console.table(results.map(r => ({ mode: r.mode, format: r.fmtName, planches: r.nb, prixU: r.pu, totalHT: r.totalHT.toFixed(2) })));
