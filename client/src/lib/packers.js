@@ -69,6 +69,8 @@ export class GuillotinePacker {
 }
 
 export class MaxRectsPacker {
+  static MAX_FREE_RECTS = 10000; // Limite de sécurité pour éviter l'out-of-memory
+
   constructor(width, height, heuristic = 'bssf') {
     this.width = width;
     this.height = height;
@@ -83,7 +85,7 @@ export class MaxRectsPacker {
     } else if (sortMode === 'width') {
       items.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
     }
-    items.forEach(item => {
+    for (const item of items) {
       let newNode = this.findNode(item.w, item.h, allowRotation);
       if (newNode.bestNode) {
         const { x, y } = newNode.bestNode;
@@ -94,7 +96,7 @@ export class MaxRectsPacker {
       } else {
         item.packed = false;
       }
-    });
+    }
     return packedItems;
   }
 
@@ -139,34 +141,42 @@ export class MaxRectsPacker {
 
   placeRect(x, y, w, h) {
     const rect = { x, y, w, h };
-    let i = 0;
-    while (i < this.freeRectangles.length) {
-      if (this.isIntersecting(this.freeRectangles[i], rect)) {
-        const free = this.freeRectangles[i];
-        if (free.x < rect.x + rect.w && free.x + free.w > rect.x) {
-          if (free.y < rect.y && free.y + free.h > rect.y)
-            this.freeRectangles.push({ x: free.x, y: free.y, w: free.w, h: rect.y - free.y });
-          if (free.y < rect.y + rect.h && free.y + free.h > rect.y + rect.h)
-            this.freeRectangles.push({ x: free.x, y: rect.y + rect.h, w: free.w, h: free.y + free.h - (rect.y + rect.h) });
-        }
-        if (free.y < rect.y + rect.h && free.y + free.h > rect.y) {
-          if (free.x < rect.x && free.x + free.w > rect.x)
-            this.freeRectangles.push({ x: free.x, y: free.y, w: rect.x - free.x, h: free.h });
-          if (free.x < rect.x + rect.w && free.x + free.w > rect.x + rect.w)
-            this.freeRectangles.push({ x: rect.x + rect.w, y: free.y, w: free.x + free.w - (rect.x + rect.w), h: free.h });
-        }
-        this.freeRectangles.splice(i, 1);
-      } else i++;
+    const newFree = [];
+    for (let i = 0; i < this.freeRectangles.length; i++) {
+      const free = this.freeRectangles[i];
+      if (!this.isIntersecting(free, rect)) {
+        newFree.push(free);
+        continue;
+      }
+      if (free.y < rect.y)
+        newFree.push({ x: free.x, y: free.y, w: free.w, h: rect.y - free.y });
+      if (free.y + free.h > rect.y + rect.h)
+        newFree.push({ x: free.x, y: rect.y + rect.h, w: free.w, h: free.y + free.h - (rect.y + rect.h) });
+      if (free.x < rect.x)
+        newFree.push({ x: free.x, y: free.y, w: rect.x - free.x, h: free.h });
+      if (free.x + free.w > rect.x + rect.w)
+        newFree.push({ x: rect.x + rect.w, y: free.y, w: free.x + free.w - (rect.x + rect.w), h: free.h });
     }
-    for (let j = 0; j < this.freeRectangles.length; j++) {
-      for (let k = j + 1; k < this.freeRectangles.length; k++) {
-        if (this.isContained(this.freeRectangles[k], this.freeRectangles[j])) {
-          this.freeRectangles.splice(k, 1); k--;
-        } else if (this.isContained(this.freeRectangles[j], this.freeRectangles[k])) {
-          this.freeRectangles.splice(j, 1); j--; break;
+    // Protection mémoire : limiter AVANT la déduplication coûteuse
+    if (newFree.length > MaxRectsPacker.MAX_FREE_RECTS) {
+      newFree.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+      newFree.length = Math.floor(MaxRectsPacker.MAX_FREE_RECTS / 2);
+    }
+    // Déduplication rapide : supprimer les rectangles contenus dans d'autres
+    // Tri par aire décroissante pour que les grands soient en premier
+    newFree.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    const pruned = [];
+    for (let i = 0; i < newFree.length; i++) {
+      let contained = false;
+      for (let j = 0; j < pruned.length; j++) {
+        if (this.isContained(newFree[i], pruned[j])) {
+          contained = true;
+          break;
         }
       }
+      if (!contained) pruned.push(newFree[i]);
     }
+    this.freeRectangles = pruned;
   }
 
   isIntersecting(r1, r2) {

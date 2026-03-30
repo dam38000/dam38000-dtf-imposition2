@@ -29,6 +29,15 @@ const PRODUCT_FORMATS = {
   },
 };
 
+// ── Limite dynamique selon la RAM du client ──
+function getMaxQuantity() {
+  const ram = navigator.deviceMemory || 4; // en Go (fallback 4 Go si non supporté)
+  if (ram <= 4) return 500;
+  if (ram <= 8) return 1500;
+  return 5000;
+}
+const MAX_QUANTITY = getMaxQuantity();
+
 export default function App() {
   // ── Etat general ──
   const [productMode, setProductMode] = useState('DTF');
@@ -57,7 +66,7 @@ export default function App() {
   // ── Modal optimal ──
   const [showOptimalModal, setShowOptimalModal] = useState(false);
   const [optimalPanel, setOptimalPanel] = useState([]);
-  const [optimalFilters, setOptimalFilters] = useState({ massicot: true, imbrique: true, imbrication: false });
+  const [optimalFilters, setOptimalFilters] = useState({ massicot: true, imbrique: true, imbrication: true });
   const [isOptimalRunning, setIsOptimalRunning] = useState(false);
   const [optimalProgress, setOptimalProgress] = useState(''); // texte progression
   const optimalCacheRef = useRef({});
@@ -65,6 +74,9 @@ export default function App() {
   const calcStopRef = useRef(false);
   const [modalPos, setModalPos] = useState({ x: 0, y: 80 });
   const modalDragRef = useRef(null);
+
+  // ── Alerte erreur ──
+  const [errorAlert, setErrorAlert] = useState(null); // { title, message, solution }
 
   const formats = PRODUCT_FORMATS[productMode] || {};
   const sheetSize = formats[selectedFormat] || { w: 575, h: 420 };
@@ -111,6 +123,7 @@ export default function App() {
 
         if (result.error) {
           console.error(`Erreur upload ${file.name}:`, result.error);
+          setErrorAlert({ title: 'Erreur d\'envoi', message: `Le fichier "${file.name}" n'a pas pu etre traite : ${result.error}`, solution: 'Verifiez le format du fichier (PDF, TIFF, PNG). Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
           continue;
         }
 
@@ -133,6 +146,11 @@ export default function App() {
         }]);
       } catch (err) {
         console.error(`Erreur upload ${file.name}:`, err);
+        if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+          setErrorAlert({ title: 'Connexion perdue', message: `Impossible d'envoyer "${file.name}".`, solution: 'Verifiez votre connexion internet et reessayez.' });
+        } else {
+          setErrorAlert({ title: 'Erreur serveur', message: `Erreur lors de l'envoi de "${file.name}" : ${err.message}`, solution: 'Reessayez dans quelques instants. Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
+        }
       }
     }
     setUploadStatus(null);
@@ -221,6 +239,12 @@ export default function App() {
       return;
     }
     if (files.length === 0) return;
+    // Protection : limite quantité totale
+    const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
+    if (totalQty > MAX_QUANTITY) {
+      setErrorAlert({ title: 'Quantite trop elevee', message: `Vous avez demande ${totalQty} images au total. Le maximum autorise pour votre ordinateur est de ${MAX_QUANTITY}.`, solution: 'Reduisez les quantites pour lancer le calcul.' });
+      return;
+    }
     calcStopRef.current = false;
     setIsCalculating(true);
     setCalcProgress('');
@@ -278,7 +302,15 @@ export default function App() {
       setImpositionErrors(result.errors || []);
     } catch (err) {
       console.error('Erreur imposition:', err);
-      setImpositionErrors([err.message]);
+      const msg = err.message || String(err);
+      if (msg.includes('memory') || msg.includes('Maximum') || msg.includes('MAX_FREE_RECTS')) {
+        setErrorAlert({ title: 'Calcul impossible', message: 'Le calcul necessite trop de memoire pour cette combinaison.', solution: 'Reduisez les quantites, utilisez un format plus grand, ou essayez le mode Massicotable.' });
+      } else if (msg.includes('timeout') || msg.includes('Timeout')) {
+        setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul a depasse le temps limite.', solution: 'Reduisez les quantites ou simplifiez le montage.' });
+      } else {
+        setErrorAlert({ title: 'Erreur de calcul', message: msg, solution: 'Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
+      }
+      setImpositionErrors([]);
     } finally {
       setIsCalculating(false);
     }
@@ -317,7 +349,7 @@ export default function App() {
         setImpositionErrors(result.errors || []);
       } catch (err) {
         console.error('Erreur imposition:', err);
-        setImpositionErrors([err.message]);
+        setErrorAlert({ title: 'Erreur de calcul', message: err.message || String(err), solution: 'Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
       } finally {
         setIsCalculating(false);
       }
@@ -327,6 +359,11 @@ export default function App() {
   // ── Lancer le calcul optimal (toutes combinaisons modes x formats) ──
   const launchOptimal = async () => {
     if (files.length === 0) return;
+    const totalQty = files.reduce((sum, f) => sum + f.quantity, 0);
+    if (totalQty > MAX_QUANTITY) {
+      setErrorAlert({ title: 'Quantite trop elevee', message: `Vous avez demande ${totalQty} images au total. Le maximum autorise pour votre ordinateur est de ${MAX_QUANTITY}.`, solution: 'Reduisez les quantites pour lancer le calcul.' });
+      return;
+    }
     const fmts = PRODUCT_FORMATS[productMode];
     const table = PRIX_TABLES[productMode];
     const isSeri = productMode === 'SeriQuadri' || productMode === 'SeriLight';
@@ -420,12 +457,17 @@ export default function App() {
             }
           } catch (err) {
             console.warn(`[optimal] ERREUR ${mode}/${fmtName}:`, err);
+            const msg = err.message || String(err);
+            if (msg.includes('memory') || msg.includes('Maximum') || msg.includes('MAX_FREE_RECTS')) {
+              console.warn(`[optimal] Skipping ${mode}/${fmtName} — memoire insuffisante`);
+            }
           }
           await new Promise(r => setTimeout(r, 0)); // laisser le rendu respirer
         }
       }
     } catch (err) {
       console.error('[optimal] ERREUR GLOBALE:', err);
+      setErrorAlert({ title: 'Erreur calcul optimal', message: err.message || String(err), solution: 'Reduisez les quantites ou deselectionnez le mode Imbrication. Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
     } finally {
       const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
       console.log(`[optimal] TERMINE — ${results.length} resultats en ${totalTime}s`);
@@ -788,10 +830,10 @@ export default function App() {
                   <div className="flex-1">
                     <div className="text-[10px] font-bold text-gray-500 uppercase">Qte</div>
                     <div className="flex items-center border border-gray-200 rounded bg-white">
-                      <input type="number" value={f.quantity} min="0"
+                      <input type="number" value={f.quantity} min="0" max={MAX_QUANTITY}
                         onFocus={e => e.target.select()}
                         onChange={e => {
-                          const v = Math.abs(parseInt(e.target.value)) || 0;
+                          const v = Math.min(MAX_QUANTITY, Math.abs(parseInt(e.target.value)) || 0);
                           setFiles(prev => prev.map(ff => ff.id === f.id ? { ...ff, quantity: v } : ff));
                           resetPlanche();
                         }}
@@ -1312,6 +1354,7 @@ export default function App() {
                     <span className="font-medium">Imbrication</span>
                   </label>
                 </div>
+                <div className="text-[10px] text-gray-400 text-center mb-1">Pour aller plus vite et si vous n&apos;avez pas besoin du mode imbrication, deselectionnez-le.</div>
 
                 {/* Titre info */}
                 <div className="mb-3 text-center">
@@ -1385,6 +1428,30 @@ export default function App() {
             <div className="text-xl font-bold mb-2">{uploadStatus.step}</div>
             <div className="text-base text-gray-300 mb-1">{uploadStatus.fileName}</div>
             <div className="text-sm text-gray-500">Fichier {uploadStatus.current} / {uploadStatus.total}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Alerte erreur ── */}
+      {errorAlert && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md mx-4 border-2 border-red-500">
+            <div className="flex items-center gap-2 mb-3">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <h3 className="text-lg font-bold text-red-700">{errorAlert.title}</h3>
+            </div>
+            <p className="text-sm text-gray-700 mb-3">{errorAlert.message}</p>
+            <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4">
+              <p className="text-sm text-blue-800"><b>Suggestion :</b> {errorAlert.solution}</p>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setErrorAlert(null)}
+                className="px-6 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors">
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}
