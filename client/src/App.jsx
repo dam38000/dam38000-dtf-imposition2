@@ -888,7 +888,7 @@ export default function App() {
           <label className={`flex-1 h-[60px] flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-colors shadow-sm
             ${files.length === 0 ? 'bg-green-100 border-green-500 text-green-700 animate-pulse-fast hover:bg-green-200' : 'bg-white border-gray-300 text-gray-700 hover:bg-white hover:border-blue-400'}`}>
             <Icons.Upload />
-            <span className="font-bold text-sm mt-1 text-gray-900">Fichiers PDF</span>
+            <span className="font-bold text-[11px] mt-1 text-gray-900 text-center leading-tight">Fichiers PDF, TIFF, PNG</span>
             <input ref={fileInputRef} type="file" className="hidden" multiple
               accept="application/pdf,.pdf,.tiff,.tif,.png,image/tiff,image/png"
               onChange={handleFileInput} />
