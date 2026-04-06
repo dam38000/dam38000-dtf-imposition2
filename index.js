@@ -17,6 +17,9 @@ app.use('/api/upload', uploadRoute);
 const exportRoute = require('./routes/export');
 app.use('/api/export', exportRoute);
 
+const analyzeRoute = require('./routes/analyze');
+app.use('/api/analyze', analyzeRoute);
+
 const saveImageRoute = require('./routes/save-image');
 app.use('/api/save-image', saveImageRoute);
 

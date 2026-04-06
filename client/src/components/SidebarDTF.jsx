@@ -1,12 +1,11 @@
 // ============================================================
-//  Sidebar.jsx — Panneau gauche : header, params, modes, fichiers, boutons
+//  SidebarDTF.jsx — Sidebar Montage DTF avec finesse
 // ============================================================
 
 import { Icons } from './Icons';
-import { PRODUCT_FORMATS } from '../lib/constants';
 
-export function Sidebar({
-  productMode, setProductMode, selectedFormat, setSelectedFormat,
+export function SidebarDTF({
+  selectedFormat, setSelectedFormat,
   formats, margin, setMargin,
   impositionMode, setImpositionMode,
   files, setFiles,
@@ -16,25 +15,16 @@ export function Sidebar({
   updateDimension, cropFile, cropAll, removeFile, clearAll,
   handleMonter, handleRemplir, isCalculating,
   resetPlanche,
+  finesse, openFinesse, analyzeAllFinesse,
+  needsAnalysis, isAnalyzing,
 }) {
   return (
     <aside className="w-[420px] bg-white border-r border-gray-300 flex flex-col shadow-lg z-10 flex-shrink-0">
 
-      {/* ── Header vert ── */}
+      {/* ── Header vert — DTF uniquement ── */}
       <div className="p-4 bg-green-700 text-white text-center flex-shrink-0">
-        <h1 className="text-lg font-bold uppercase tracking-wider">Montage Automatique</h1>
+        <h1 className="text-lg font-bold uppercase tracking-wider">Montage DTF</h1>
         <h2 className="text-xl font-bold text-white mt-1">by Printmytransfer</h2>
-        <div className="mt-2 flex flex-col gap-1">
-          <div className="flex justify-center gap-1">
-            {Object.keys(PRODUCT_FORMATS).map(m => (
-              <button key={m} onClick={() => { setProductMode(m); setSelectedFormat(Object.keys(PRODUCT_FORMATS[m])[0]); resetPlanche(); }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all
-                  ${productMode === m ? 'bg-white text-green-800 shadow' : 'bg-green-600 text-white hover:bg-green-500'}`}>
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* ── Parametres feuille ── */}
@@ -53,8 +43,13 @@ export function Sidebar({
             <span className="text-xs font-bold text-gray-600 w-16">Bordure</span>
             <input type="range" min="0" max="10" step="0.5" value={margin}
               onChange={e => { setMargin(parseFloat(e.target.value)); resetPlanche(); }}
-              className="flex-1 accent-green-600" />
-            <span className="text-xs font-bold text-gray-700 w-12 text-right">{margin} mm</span>
+              className="w-24 accent-green-600 flex-shrink-0" />
+            <span className="text-xs font-bold text-gray-700 w-12 text-right flex-shrink-0">{margin} mm</span>
+            <button onClick={analyzeAllFinesse} disabled={!needsAnalysis}
+              className={`flex-1 px-2 py-1.5 rounded text-[10px] font-bold transition-all
+                ${isAnalyzing ? 'bg-orange-400 text-white animate-pulse cursor-wait' : needsAnalysis ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+              {isAnalyzing ? 'Analyse...' : 'Analyser finesses'}
+            </button>
           </div>
         </div>
       </div>
@@ -135,6 +130,12 @@ export function Sidebar({
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-800 truncate">{f.name}</span>
                 <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                  {/* Bouton Finesse — texte rouge clignotant si détectées, grisé sinon */}
+                  <button onClick={() => openFinesse(f.id)}
+                    className={`text-[13px] font-bold px-2 py-0.5 rounded transition-all
+                      ${f.hasIssues === true ? 'text-red-600 bg-red-50 border border-red-300 animate-[pulse_0.6s_ease-in-out_infinite]' : 'text-gray-400 bg-gray-100 border border-gray-200'}`}>
+                    finesses
+                  </button>
                   <button onClick={() => cropFile(f.id, true)} className="text-gray-400 hover:text-green-600 transition-colors p-0.5">
                     <Icons.Crop size={12} />
                   </button>
@@ -180,9 +181,13 @@ export function Sidebar({
                   </div>
                 </div>
               </div>
+              {/* Statut finesse */}
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-[9px] text-gray-400">{f.iccSource || 'Profil inconnu'}</span>
                 {f.hasAlpha && <span className="text-[9px] text-pink-500 font-bold">alpha</span>}
+                {f.hasIssues === true && <span className="text-[9px] text-red-500 font-bold">finesses détectées</span>}
+                {f.hasIssues === false && <span className="text-[9px] text-green-500 font-bold">OK</span>}
+                {f.correctedSrc && <span className="text-[9px] text-blue-500 font-bold">corrigé</span>}
               </div>
             </div>
           </div>

@@ -23,13 +23,13 @@ async function getBrowser() {
   return _browser;
 }
 
-async function runPuppeteerCorrection(inputPath, type = 'finesses') {
+async function runPuppeteerCorrection(inputPath, type = 'finesses', thresholdMm = 0.3) {
   const imageBuffer = fs.readFileSync(inputPath);
   const base64 = imageBuffer.toString('base64');
   const dataUrl = `data:image/png;base64,${base64}`;
 
-  const finesse = 0.6;
-  const calculatedFinesse = (finesse / 0.08) * 0.75; // = 5.625
+  const calculatedFinesse = (thresholdMm / 0.08) * 0.75;
+  console.log(`[Puppeteer] thresholdMm=${thresholdMm} → calculatedFinesse=${calculatedFinesse.toFixed(2)}`);
 
   const helperPath = path.join(__dirname, '..', 'correction-helper.html');
   const fileUrl = 'file:///' + helperPath.replace(/\\/g, '/');
@@ -72,46 +72,51 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
   const correctedPath = path.join(jobDir, 'corrected_preview.png');
   const inputPath = prefix === 'corrected' && fs.existsSync(correctedPath) ? correctedPath : convertedPath;
 
-  const tmp = (name) => path.join(jobDir, `_${prefix}_${name}${T}`);
+  const debug = (name) => path.join(jobDir, `debug_${prefix}_${name}.png`);
   const overlayPath = path.join(jobDir, `${prefix}_overlay.png`);
   const pureDefectsPath = path.join(jobDir, `${prefix}_pure_defects.png`);
   const thumbOverlayPath = path.join(jobDir, `${prefix}_thumb.png`);
 
   const radius = Math.max(1, Math.round(thresholdMm / 25.4 * 300));
   const halfRadius = Math.max(1, Math.round(radius / 2));
-  const tempFiles = [];
-  const t = (name) => { const p = tmp(name); tempFiles.push(p); return p; };
+
+  console.log(`[Analyze] ${prefix} : input=${inputPath}, seuil=${thresholdMm}mm, radius=${radius}px, halfRadius=${halfRadius}px`);
 
   try {
     // a) Alpha full res + resize 50% pour morphologie rapide
-    im(`magick "${inputPath}" -colorspace sRGB -alpha extract -write "${t('alpha')}" -resize 50% "${t('half')}"`);
+    const alphaPath = debug('01_alpha_fullres');
+    const halfPath = debug('02_alpha_halfres');
+    im(`magick "${inputPath}" -colorspace sRGB -alpha extract -write "${alphaPath}" -resize 50% "${halfPath}"`);
+    console.log(`[Analyze] 01_alpha_fullres + 02_alpha_halfres sauvegardés`);
 
-    // b) Finesses à demi-résolution : Open + Difference en 1 appel
-    im(`magick "${t('half')}" ( +clone -morphology Open Disk:${halfRadius} ) -compose Difference -composite "${t('fin')}"`);
+    // b) Ouverture morphologique à demi-résolution
+    const openedPath = debug('03_opened_halfres');
+    im(`magick "${halfPath}" -morphology Open Disk:${halfRadius} "${openedPath}"`);
+    console.log(`[Analyze] 03_opened_halfres sauvegardé`);
 
-    // c) Réserves à demi-résolution : Close + Difference (symétrique des finesses)
-    // Close bouche les petits trous transparents, Difference montre ce qui a été bouché = réserves
-    im(`magick "${t('half')}" ( +clone -morphology Close Disk:${halfRadius} ) -compose Difference -composite "${t('res')}"`);
+    // c) Différence = finesses détectées
+    const finPath = debug('04_finesses_diff_halfres');
+    im(`magick "${halfPath}" "${openedPath}" -compose Difference -composite "${finPath}"`);
+    console.log(`[Analyze] 04_finesses_diff_halfres sauvegardé`);
 
-    // d) 3 stats à demi-résolution (mean invariant à l'échelle)
-    const statsRaw = im(`magick "${t('fin')}" "${t('res')}" "${t('half')}" -format "%[mean]\\n" info:`);
-    const [finMean, resMean, alphaMean] = statsRaw.split('\n').map(v => parseFloat(v) || 0);
+    // d) Stats finesses
+    const statsRaw = im(`magick "${finPath}" "${halfPath}" -format "%[mean]\\n" info:`);
+    const [finMean, alphaMean] = statsRaw.split('\n').map(v => parseFloat(v) || 0);
 
     const has_finesses = finMean > 0;
-    const has_reserves = resMean > 0;
     const finesses_percent = alphaMean > 0 ? Math.round((finMean / alphaMean) * 1000) / 10 : 0;
-    const reserves_percent = alphaMean > 0 ? Math.round((resMean / alphaMean) * 1000) / 10 : 0;
+    console.log(`[Analyze] Stats: finMean=${finMean}, alphaMean=${alphaMean}, has_finesses=${has_finesses}, percent=${finesses_percent}%`);
 
-    // e) Overlay combiné : finesses (magenta) + réserves (vert fluo)
-    const dims = im(`magick identify -format "%wx%h" "${t('alpha')}"`);
-    // Créer couche magenta (finesses) à pleine résolution
-    im(`magick "${t('fin')}" -resize ${dims}! ( +clone -fill "rgb(255,0,255)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${t('fin_color')}"`);
-    // Créer couche vert fluo (réserves) à pleine résolution
-    im(`magick "${t('res')}" -resize ${dims}! ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${t('res_color')}"`);
-    // Composer : vert (réserves) en base, magenta (finesses) par-dessus
-    im(`magick "${t('res_color')}" "${t('fin_color')}" -compose Over -composite PNG32:"${overlayPath}"`);
+    // e) Overlay vert (finesses uniquement) — remonté à pleine résolution
+    const dims = im(`magick identify -format "%wx%h" "${alphaPath}"`);
+    const finFullPath = debug('05_finesses_fullres');
+    im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
+    console.log(`[Analyze] 05_finesses_fullres sauvegardé`);
 
-    // f) Panneau DROIT : même overlay combiné
+    im(`magick "${finFullPath}" ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
+    console.log(`[Analyze] overlay vert sauvegardé: ${overlayPath}`);
+
+    // f) Panneau DROIT : même overlay
     fs.copyFileSync(overlayPath, pureDefectsPath);
 
     // g) Miniature (seulement pour l'analyse principale)
@@ -125,14 +130,12 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
       }
     }
 
-    // Nettoyage
-    for (const f of tempFiles) { try { fs.unlinkSync(f); } catch {} }
+    // PAS de nettoyage — on garde les fichiers debug
 
     return {
-      has_finesses, has_reserves, finesses_percent, reserves_percent,
+      has_finesses, finesses_percent,
       overlay_url: `/uploads/${fileId}/${prefix}_overlay.png`,
       pure_defects_url: `/uploads/${fileId}/${prefix}_pure_defects.png`,
-      finesses_overlay_url: `/uploads/${fileId}/${prefix}_overlay.png`,
       finesses_thumb_url: `/uploads/${fileId}/${prefix}_thumb.png`,
       threshold_mm: thresholdMm, radius_px: radius,
     };
@@ -164,10 +167,10 @@ router.post('/finesses', async (req, res) => {
 });
 
 // ============================================================
-// POST /correct-finesses — Via Puppeteer (code original montage.html)
+// POST /correct-finesses — Via ImageMagick (épaississement des traits fins)
 // ============================================================
-router.post('/correct-finesses', async (req, res) => {
-  const { file_id, threshold_mm } = req.body;
+router.post('/correct-finesses', (req, res) => {
+  const { file_id, threshold_mm, intensity = 1 } = req.body;
   if (!file_id || threshold_mm == null) {
     return res.status(400).json({ error: 'file_id et threshold_mm requis' });
   }
@@ -182,29 +185,83 @@ router.post('/correct-finesses', async (req, res) => {
   }
 
   try {
-    const resultDataUrl = await runPuppeteerCorrection(inputPath, 'finesses');
+    const detectRadius = Math.max(1, Math.round(threshold_mm / 25.4 * 300));
+    const halfRadius = Math.max(1, Math.round(detectRadius / 2));
+    const radius = Math.max(1, Math.round(2 * intensity) - 1); // base 2px × intensité - 1
+    const t = (name) => path.join(jobDir, `_correct_${name}.png`);
 
-    // Convertir data URL → fichier PNG
-    const base64Data = resultDataUrl.replace(/^data:image\/png;base64,/, '');
-    fs.writeFileSync(correctedPath, Buffer.from(base64Data, 'base64'));
+    const maskDilateRadius = radius + 2; // dilater le masque un peu plus large que la correction
+    console.log(`[Correct Finesses IM] Début: seuil=${threshold_mm}mm, detectRadius=${detectRadius}px, correction radius=${radius}px, maskDilate=${maskDilateRadius}px`);
 
-    console.log(`[Correct Finesses Puppeteer] OK → ${correctedPath}`);
+    // Approche : épaissir partout, puis masquer avec l'overlay finesses
+    // pour ne garder l'épaississement QUE dans les zones de finesses.
+    //
+    // 1) Extraire l'alpha original
+    im(`magick "${inputPath}" -alpha extract "${t('alpha')}"`);
 
-    // Ré-analyser
+    // 2) Récupérer le masque des finesses (overlay vert → extraire l'alpha = zones détectées)
+    const overlayPath = path.join(jobDir, 'finesses_overlay.png');
+    if (!fs.existsSync(overlayPath)) {
+      // Si l'overlay n'existe pas encore, lancer l'analyse d'abord
+      analyzeImage(jobDir, file_id, threshold_mm, 'finesses');
+    }
+    // Extraire l'alpha de l'overlay = masque binaire des finesses
+    im(`magick "${overlayPath}" -alpha extract "${t('finesse_mask')}"`);
+    // Dilater le masque pour couvrir la zone de correction autour des finesses
+    im(`magick "${t('finesse_mask')}" -morphology Dilate Disk:${maskDilateRadius} "${t('zone_mask')}"`);
+
+    // 3) Créer l'image épaissie (comme avant, sur toute l'image)
+    im(`magick "${t('alpha')}" -morphology Dilate Disk:${radius} "${t('alpha_dilated')}"`);
+    im(`magick "${inputPath}" -background white -alpha remove "${t('rgb_white')}"`);
+    im(`magick "${t('rgb_white')}" -negate -morphology Dilate Disk:${radius} -negate "${t('rgb_propagated')}"`);
+    im(`magick "${t('rgb_propagated')}" "${inputPath}" -compose Over -composite -alpha off "${t('rgb_final')}"`);
+    im(`magick "${t('rgb_final')}" "${t('alpha_dilated')}" -compose CopyOpacity -composite PNG32:"${t('thick_full')}"`);
+
+    // 4) Composer avec masque : image épaissie dans les zones finesses, originale ailleurs
+    //    - Commencer par l'image originale
+    //    - Superposer l'image épaissie en utilisant zone_mask comme opacité
+    //    thick_masked = thick_full avec alpha = zone_mask
+    im(`magick "${t('thick_full')}" "${t('zone_mask')}" -compose CopyOpacity -composite PNG32:"${t('thick_masked')}"`);
+    //    Composer : originale en base, thick_masked par-dessus
+    im(`magick "${inputPath}" "${t('thick_masked')}" -compose Over -composite PNG32:"${correctedPath}"`);
+
+    console.log(`[Correct Finesses IM] OK → ${correctedPath}`);
+
+    // Regénérer la thumbnail : même taille que converted.png divisé par 2 (= 150 DPI)
+    const thumbnailPath = path.join(jobDir, 'thumbnail.png');
+    const convertedDims = im(`magick identify -format "%wx%h" "${convertedPath}"`);
+    const [cw, ch] = convertedDims.split('x').map(Number);
+    const thumbW = Math.round(cw / 2);
+    const thumbH = Math.round(ch / 2);
+    im(`magick "${correctedPath}" -resize ${thumbW}x${thumbH}! -density 150 PNG32:"${thumbnailPath}"`);
+    console.log(`[Correct Finesses IM] Thumbnail regénérée: ${thumbnailPath} (${thumbW}x${thumbH} depuis converted ${cw}x${ch})`);
+
+    // Sauvegarder les images debug
+    for (const name of ['alpha', 'finesse_mask', 'zone_mask', 'alpha_dilated', 'rgb_white', 'rgb_propagated', 'rgb_final', 'thick_full', 'thick_masked']) {
+      const src = t(name);
+      const dst = path.join(jobDir, `debug_correct_${name}.png`);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, dst);
+        fs.unlinkSync(src);
+      }
+    }
+
+    // Ré-analyser pour voir les finesses restantes
     const result = analyzeImage(jobDir, file_id, threshold_mm, 'corrected');
     result.corrected_url = `/uploads/${file_id}/corrected_preview.png`;
+    result.thumbnail_url = `/uploads/${file_id}/thumbnail.png?t=${Date.now()}`;
     res.json(result);
 
   } catch (err) {
-    console.error('[Correct Finesses Puppeteer]', err.message);
+    console.error('[Correct Finesses IM]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ============================================================
-// POST /correct-reserves — Via Puppeteer (code original montage.html)
+// POST /correct-reserves — Via ImageMagick (fermeture morphologique)
 // ============================================================
-router.post('/correct-reserves', async (req, res) => {
+router.post('/correct-reserves', (req, res) => {
   const { file_id, threshold_mm } = req.body;
   if (!file_id || threshold_mm == null) {
     return res.status(400).json({ error: 'file_id et threshold_mm requis' });
@@ -220,13 +277,24 @@ router.post('/correct-reserves', async (req, res) => {
   }
 
   try {
-    const resultDataUrl = await runPuppeteerCorrection(inputPath, 'reserves');
+    const radius = Math.max(1, Math.round(threshold_mm / 25.4 * 300));
 
-    // Convertir data URL → fichier PNG
-    const base64Data = resultDataUrl.replace(/^data:image\/png;base64,/, '');
-    fs.writeFileSync(correctedPath, Buffer.from(base64Data, 'base64'));
+    console.log(`[Correct Reserves IM] Début: seuil=${threshold_mm}mm, radius=${radius}px`);
 
-    console.log(`[Correct Reserves Puppeteer] OK → ${correctedPath}`);
+    // Fermeture morphologique sur l'alpha (bouche les petits trous)
+    // puis recomposer l'image avec le nouvel alpha
+    const t = (name) => path.join(jobDir, `_correct_res_${name}.png`);
+
+    im(`magick "${inputPath}" -alpha extract "${t('alpha')}"`);
+    im(`magick "${t('alpha')}" -morphology Close Disk:${radius} "${t('closed')}"`);
+    im(`magick "${inputPath}" "${t('closed')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
+
+    console.log(`[Correct Reserves IM] OK → ${correctedPath}`);
+
+    // Nettoyage
+    for (const name of ['alpha', 'closed']) {
+      try { fs.unlinkSync(t(name)); } catch {}
+    }
 
     // Ré-analyser
     const result = analyzeImage(jobDir, file_id, threshold_mm, 'corrected');
@@ -257,7 +325,9 @@ router.post('/save-correction', async (req, res) => {
 
   try {
     fs.copyFileSync(correctedPath, convertedPath);
-    im(`magick "${convertedPath}" -thumbnail 150x150 -background none -gravity center PNG32:"${thumbnailPath}"`);
+    // Regénérer le thumbnail à 50% de converted (= taille réelle à 150 DPI)
+    im(`magick "${convertedPath}" -resize 50% -density 150 PNG32:"${thumbnailPath}"`);
+    console.log(`[Save Correction] Thumbnail regénéré à 50% de converted.png`);
     try { fs.unlinkSync(correctedPath); } catch {}
     for (const f of ['corrected_overlay.png', 'corrected_pure_defects.png', 'corrected_thumb.png']) {
       try { fs.unlinkSync(path.join(jobDir, f)); } catch {}
