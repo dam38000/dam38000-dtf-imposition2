@@ -113,7 +113,7 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
     console.log(`[Analyze] 05_finesses_fullres sauvegardé`);
 
-    im(`magick "${finFullPath}" ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
+    im(`magick "${finFullPath}" \\( +clone -fill "rgb(0,255,0)" -colorize 100 \\) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
     console.log(`[Analyze] overlay vert sauvegardé: ${overlayPath}`);
 
     // f) Panneau DROIT : même overlay
@@ -140,7 +140,6 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
       threshold_mm: thresholdMm, radius_px: radius,
     };
   } catch (err) {
-    for (const f of tempFiles) { try { fs.unlinkSync(f); } catch {} }
     throw err;
   }
 }
