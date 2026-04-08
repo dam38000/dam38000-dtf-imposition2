@@ -336,8 +336,11 @@ router.post('/', upload.single('file'), async (req, res) => {
         }
       }
 
-      // normalized.tif conservé pour debug dans uploads/{id}/
-      console.log(`[TIFF] Fichiers intermédiaires conservés dans uploads/${id}/`);
+      // Nettoyage fichiers intermédiaires TIFF
+      if (fs.existsSync(tiffAlphaPath)) fs.unlinkSync(tiffAlphaPath);
+      if (fs.existsSync(tiffColorPath)) fs.unlinkSync(tiffColorPath);
+      const normalizedTiff = path.join(jobDir, 'normalized.tif');
+      if (fs.existsSync(normalizedTiff)) fs.unlinkSync(normalizedTiff);
 
     } else if (isPdf) {
       // ==================== PIPELINE PDF ====================
@@ -405,7 +408,9 @@ router.post('/', upload.single('file'), async (req, res) => {
           }
         }
 
-        // Fichiers intermédiaires conservés pour debug dans uploads/{id}/
+        // Nettoyage fichiers intermédiaires
+        if (fs.existsSync(alphaPath)) fs.unlinkSync(alphaPath);
+        if (fs.existsSync(colorPath)) fs.unlinkSync(colorPath);
       } else {
         console.log('[PDF] Pipeline RGB détecté — procédure 4 étapes');
 
@@ -503,7 +508,10 @@ router.post('/', upload.single('file'), async (req, res) => {
           }
         }
 
-        // Fichiers intermédiaires conservés pour debug dans uploads/{id}/
+        // Nettoyage fichiers intermédiaires
+        if (fs.existsSync(rasterPath)) fs.unlinkSync(rasterPath);
+        if (fs.existsSync(alphaPath)) fs.unlinkSync(alphaPath);
+        if (fs.existsSync(colorPath)) fs.unlinkSync(colorPath);
       }
 
       // Corriger le nom du profil iCCP
@@ -637,6 +645,10 @@ router.post('/', upload.single('file'), async (req, res) => {
           console.error(`[ICC] ERREUR correction iCCP: ${err.message}`);
         }
       }
+
+      // Nettoyage fichiers intermédiaires PNG
+      if (fs.existsSync(pngAlphaPath)) fs.unlinkSync(pngAlphaPath);
+      if (fs.existsSync(pngColorPath)) fs.unlinkSync(pngColorPath);
     }
 
     // ==================== COMMUN : Miniature + Réponse ====================

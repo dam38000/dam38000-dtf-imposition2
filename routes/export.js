@@ -79,8 +79,9 @@ router.post('/dessin', async (req, res) => {
     // Injecter le profil ICC eciRGB v2 dans le PNG (sans conversion de pixels)
     injectIccProfile(outPath, ECIRGB_PROFILE);
 
-    // Debug : garder les fichiers temporaires
-    res.download(outPath, 'dessin_300dpi.png');
+    res.download(outPath, 'dessin_300dpi.png', () => {
+      tmpFiles.forEach(f => { try { fs.unlinkSync(f); } catch {} });
+    });
 
   } catch (err) {
     console.error('Erreur export dessin:', err);

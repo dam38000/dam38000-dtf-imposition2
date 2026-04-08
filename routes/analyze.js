@@ -82,22 +82,20 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
 
   console.log(`[Analyze] ${prefix} : input=${inputPath}, seuil=${thresholdMm}mm, radius=${radius}px, halfRadius=${halfRadius}px`);
 
+  const tmp = (name) => path.join(jobDir, `_tmp_${name}.png`);
   try {
     // a) Alpha full res + resize 50% pour morphologie rapide
-    const alphaPath = debug('01_alpha_fullres');
-    const halfPath = debug('02_alpha_halfres');
+    const alphaPath = tmp('alpha_full');
+    const halfPath = tmp('alpha_half');
     im(`magick "${inputPath}" -colorspace sRGB -alpha extract -write "${alphaPath}" -resize 50% "${halfPath}"`);
-    console.log(`[Analyze] 01_alpha_fullres + 02_alpha_halfres sauvegardés`);
 
     // b) Ouverture morphologique à demi-résolution
-    const openedPath = debug('03_opened_halfres');
+    const openedPath = tmp('opened');
     im(`magick "${halfPath}" -morphology Open Disk:${halfRadius} "${openedPath}"`);
-    console.log(`[Analyze] 03_opened_halfres sauvegardé`);
 
     // c) Différence = finesses détectées
-    const finPath = debug('04_finesses_diff_halfres');
+    const finPath = tmp('fin_diff');
     im(`magick "${halfPath}" "${openedPath}" -compose Difference -composite "${finPath}"`);
-    console.log(`[Analyze] 04_finesses_diff_halfres sauvegardé`);
 
     // d) Stats finesses
     const statsRaw = im(`magick "${finPath}" "${halfPath}" -format "%[mean]\\n" info:`);
@@ -105,16 +103,14 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
 
     const has_finesses = finMean > 0;
     const finesses_percent = alphaMean > 0 ? Math.round((finMean / alphaMean) * 1000) / 10 : 0;
-    console.log(`[Analyze] Stats: finMean=${finMean}, alphaMean=${alphaMean}, has_finesses=${has_finesses}, percent=${finesses_percent}%`);
+    console.log(`[Analyze] ${prefix}: has_finesses=${has_finesses}, percent=${finesses_percent}%`);
 
     // e) Overlay vert (finesses uniquement) — remonté à pleine résolution
     const dims = im(`magick identify -format "%wx%h" "${alphaPath}"`);
-    const finFullPath = debug('05_finesses_fullres');
+    const finFullPath = tmp('fin_full');
     im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
-    console.log(`[Analyze] 05_finesses_fullres sauvegardé`);
 
     im(`magick "${finFullPath}" ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
-    console.log(`[Analyze] overlay vert sauvegardé: ${overlayPath}`);
 
     // f) Panneau DROIT : même overlay
     fs.copyFileSync(overlayPath, pureDefectsPath);
@@ -130,7 +126,10 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
       }
     }
 
-    // PAS de nettoyage — on garde les fichiers debug
+    // Nettoyage des fichiers temporaires
+    for (const f of [alphaPath, halfPath, openedPath, finPath, finFullPath]) {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
 
     return {
       has_finesses, finesses_percent,
@@ -241,14 +240,10 @@ router.post('/correct-finesses', (req, res) => {
     im(`magick "${correctedPath}" -resize ${thumbW}x${thumbH}! -density 150 PNG32:"${thumbnailPath}"`);
     console.log(`[Correct Finesses IM] Thumbnail regénérée: ${thumbnailPath} (${thumbW}x${thumbH} depuis converted ${cw}x${ch})`);
 
-    // Sauvegarder les images debug
+    // Nettoyage des fichiers temporaires
     for (const name of ['alpha', 'finesse_mask', 'zone_mask', 'alpha_dilated', 'rgb_white', 'rgb_propagated', 'rgb_final', 'thick_full', 'thick_masked', 'composed', 'alpha_pre_clean', 'alpha_cleaned']) {
       const src = t(name);
-      const dst = path.join(jobDir, `debug_correct_${name}.png`);
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, dst);
-        fs.unlinkSync(src);
-      }
+      if (fs.existsSync(src)) fs.unlinkSync(src);
     }
 
     // Ré-analyser pour voir les finesses restantes
