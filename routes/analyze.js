@@ -110,7 +110,7 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     const finFullPath = tmp('fin_full');
     im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
 
-    im(`magick "${finFullPath}" ( +clone -fill "rgb(0,255,0)" -colorize 100 ) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
+    im(`magick "${finFullPath}" \\( +clone -fill "rgb(0,255,0)" -colorize 100 \\) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
 
     // f) Panneau DROIT : même overlay
     fs.copyFileSync(overlayPath, pureDefectsPath);
