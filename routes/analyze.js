@@ -101,8 +101,8 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     const statsRaw = im(`magick "${finPath}" "${halfPath}" -format "%[mean]\\n" info:`);
     const [finMean, alphaMean] = statsRaw.split('\n').map(v => parseFloat(v) || 0);
 
-    const has_finesses = finMean > 0;
     const finesses_percent = alphaMean > 0 ? Math.round((finMean / alphaMean) * 1000) / 10 : 0;
+    const has_finesses = finesses_percent >= 0.5; // seuil : ignorer si moins de 0.5% de pixels affectés
     console.log(`[Analyze] ${prefix}: has_finesses=${has_finesses}, percent=${finesses_percent}%`);
 
     // e) Overlay vert (finesses uniquement) — remonté à pleine résolution

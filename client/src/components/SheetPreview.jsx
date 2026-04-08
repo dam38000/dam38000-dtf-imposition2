@@ -11,7 +11,7 @@ export function SheetPreview({
   impositionErrors,
   isOptimalRunning, isCalculating, optimalProgress, calcProgress,
   allowMove, setSheets,
-  files, stats, selectedFormat, totalExemplaires,
+  files, stats, selectedFormat, totalExemplaires, prixTotal,
   showOptimalModal, setShowOptimalModal, setOptimalPanel,
   handleExportCut, handleExportComposite, handleExportPNG,
   allowRotation, setAllowRotation, setAllowMove,
@@ -22,21 +22,24 @@ export function SheetPreview({
     <main className="flex-1 flex flex-col h-full overflow-hidden">
 
       {/* ── Barre header ── */}
-      <div className="h-[185px] bg-white border-b border-gray-300 flex shadow-sm z-10 flex-shrink-0">
+      <div className="h-[160px] bg-white border-b border-gray-300 flex shadow-sm z-10 flex-shrink-0">
         {/* Colonne 1 : Tirage */}
-        <div className="w-[240px] border-r border-gray-200 flex flex-col items-center justify-start p-3 bg-gray-50 flex-shrink-0">
-          <div className="w-full px-3 py-2 bg-gray-400 text-white text-sm font-bold rounded shadow text-center cursor-not-allowed">
+        <div className="w-[240px] border-r border-gray-200 flex flex-col items-center justify-start p-2 bg-gray-50 flex-shrink-0">
+          <div className="w-full px-3 py-1.5 bg-gray-400 text-white text-sm font-bold rounded shadow text-center cursor-not-allowed">
             Accueil
           </div>
-          <div className="flex items-baseline gap-1 mt-2">
+          <div className="flex items-baseline gap-1 mt-1">
             <span className="text-4xl font-bold text-blue-600">{totalExemplaires}</span>
             <span className="text-xs text-gray-500">exemplaires</span>
             <span className="text-2xl font-bold text-gray-700">{selectedFormat}</span>
           </div>
+          {prixTotal > 0 && (
+            <div className="text-lg font-bold text-green-600 mt-1">{prixTotal.toFixed(2)} € HT</div>
+          )}
           <button onClick={() => { if (files.length > 0) { setShowOptimalModal(true); setOptimalPanel([]); } }}
             disabled={files.length === 0}
             title={files.length === 0 ? "Ajoutez des fichiers pour accéder à l'optimisation" : "Trouver la combinaison de formats de feuille la plus économique pour votre tirage"}
-            className={`mt-3 px-5 py-2 text-sm font-bold rounded-full shadow transition-colors
+            className={`mt-2 px-5 py-1.5 text-sm font-bold rounded-full shadow transition-colors
             ${files.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white animate-pulse-fast' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
             Voir les montages les plus economiques
           </button>
@@ -139,27 +142,33 @@ export function SheetPreview({
                 Utilisation du programme de montage
               </h2>
               <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-gray-600">
-                <div>
-                  <div className="font-bold text-gray-800 text-base mb-1">1 — Charger vos fichiers</div>
-                  <p className="leading-relaxed mb-1">Chargez vos fichiers ou déposez-les dans l'espace vert clair. Par défaut, les fichiers seront rognés à 1mm du bord. Si vous ne le souhaitez pas, décochez la case correspondante. Vous pouvez rogner chaque dessin individuellement ou globalement.</p>
-                  <p>• Le bouton <span className="font-semibold text-gray-700">"Remplir"</span> permet de remplir la feuille à condition qu'un seul dessin soit chargé.</p>
+                <div className="col-span-2">
+                  <div className="font-bold text-gray-800 text-base mb-1">1 — Vos fichiers</div>
+                  <p className="leading-relaxed mb-1">Les fichiers accept&eacute;s sont de type <span className="font-bold text-gray-700">TIFF</span>, <span className="font-bold text-gray-700">PDF</span>, <span className="font-bold text-gray-700">PNG</span>.</p>
+                  <p className="leading-relaxed mb-1">Ils peuvent &ecirc;tre en <span className="font-bold text-gray-700">CMJN</span> ou <span className="font-bold text-gray-700">RVB</span>. Enregistrez le profil colorim&eacute;trique du document. S&apos;il n&apos;y est pas, le syst&egrave;me lui affectera le FOGRA39 ou le sRGB suivant le cas. Pour avoir les meilleurs r&eacute;sultats, privil&eacute;giez le <span className="font-bold text-gray-700">CoatedFOGRA39</span>.</p>
+                  <p className="leading-relaxed">Les fichiers doivent obligatoirement avoir une <span className="font-bold text-gray-700">transparence</span> qui permet de d&eacute;limiter o&ugrave; s&apos;imprime le blanc. S&apos;il n&apos;y en a pas, toute la surface du rectangle du dessin sera blanche.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-base mb-1">3 — Montage le plus économique</div>
-                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Voir les montages les plus économiques"</span> calcule les prix pour tous les types et formats. Le tableau vous affichera toutes les possibilités pour choisir la plus économique.</p>
-                  <p className="mt-2 text-gray-500 italic">Nota : le classement de la solution la plus économique est basé sur le prix catalogue.</p>
+                  <div className="font-bold text-gray-800 text-base mb-1">2 — Charger vos fichiers</div>
+                  <p className="leading-relaxed mb-1">Chargez vos fichiers ou d&eacute;posez-les dans l&apos;espace vert clair. Par d&eacute;faut, les fichiers seront rogn&eacute;s &agrave; 1mm du bord. Si vous ne le souhaitez pas, d&eacute;cochez la case correspondante. Vous pouvez rogner chaque dessin individuellement ou globalement.</p>
+                  <p>• Le bouton <span className="font-semibold text-gray-700">&quot;Remplir&quot;</span> permet de remplir la feuille &agrave; condition qu&apos;un seul dessin soit charg&eacute;.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-base mb-1">2 — Faire une imposition</div>
+                  <div className="font-bold text-gray-800 text-base mb-1">4 — Montage le plus &eacute;conomique</div>
+                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">&quot;Voir les montages les plus &eacute;conomiques&quot;</span> calcule les prix pour tous les types et formats. Le tableau vous affichera toutes les possibilit&eacute;s pour choisir la plus &eacute;conomique.</p>
+                  <p className="mt-2 text-gray-500 italic">Nota : le classement de la solution la plus &eacute;conomique est bas&eacute; sur le prix catalogue.</p>
+                </div>
+                <div>
+                  <div className="font-bold text-gray-800 text-base mb-1">3 — Faire une imposition</div>
                   <p>• Choisissez le format (en haut)</p>
-                  <p>• Définissez la bordure (défaut 6mm)</p>
+                  <p>• D&eacute;finissez la bordure (d&eacute;faut 6mm)</p>
                   <p>• Choisissez le type de montage : <span className="font-bold text-gray-700">Massicotable — Non Massicotable — Imbrication</span></p>
                   <p>• Lancez le montage</p>
-                  <p className="mt-1">Une fenêtre vous proposera d'autres agencements avec le même nombre d'exemplaires.</p>
+                  <p className="mt-1">Une fen&ecirc;tre vous proposera d&apos;autres agencements avec le m&ecirc;me nombre d&apos;exemplaires.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-base mb-1">4 — Export</div>
-                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Export dans votre espace"</span> exporte le montage vers printmytransfer.fr. Vous pouvez aussi exporter le fichier de découpe.</p>
+                  <div className="font-bold text-gray-800 text-base mb-1">5 — Export</div>
+                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">&quot;Export dans votre espace&quot;</span> exporte le montage vers printmytransfer.fr. Vous pouvez aussi exporter le fichier de d&eacute;coupe.</p>
                 </div>
               </div>
             </div>

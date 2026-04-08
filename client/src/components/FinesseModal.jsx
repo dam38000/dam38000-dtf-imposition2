@@ -470,15 +470,18 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               );
             })}
             {/* Texture coton bio */}
-            <button onClick={() => setBgMode(bgMode === 'texture' ? 'plain' : 'texture')}
-              title={bgTexture ? 'Retirer texture coton' : 'Texture coton bio'}
-              className={`w-7 h-7 rounded border-2 text-[7px] font-bold leading-tight transition-all ${bgMode === 'texture' ? 'border-green-600 ring-2 ring-green-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
-              style={{
-                backgroundColor: '#f5f0e8',
-                backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h12v1H0zm0 3h12v1H0zm0 3h12v1H0zm0 3h12v1H0z' fill='rgba(139,119,90,0.2)'/%3E%3Cpath d='M0 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0z' fill='rgba(139,119,90,0.15)'/%3E%3C/svg%3E")`,
-              }}>
-              <span style={{ color: '#6b8a3e' }}>&#127793;</span>
-            </button>
+            <div className="flex flex-col items-center">
+              <button onClick={() => setBgMode(bgMode === 'texture' ? 'plain' : 'texture')}
+                title={bgTexture ? 'Retirer texture coton' : 'Texture coton bio'}
+                className={`w-7 h-7 rounded border-2 text-[7px] font-bold leading-tight transition-all ${bgMode === 'texture' ? 'border-green-600 ring-2 ring-green-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
+                style={{
+                  backgroundColor: '#f5f0e8',
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h12v1H0zm0 3h12v1H0zm0 3h12v1H0zm0 3h12v1H0z' fill='rgba(139,119,90,0.2)'/%3E%3Cpath d='M0 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0z' fill='rgba(139,119,90,0.15)'/%3E%3C/svg%3E")`,
+                }}>
+                <span style={{ color: '#6b8a3e' }}>&#127793;</span>
+              </button>
+              <span className="text-[14px] text-gray-500 leading-tight text-center">fond<br/>tissu</span>
+            </div>
             {/* Fond par défaut (gris moyen) */}
             <button onClick={() => { setBgColor('#9ca3af'); setBgMode('plain'); }}
               title="Fond par défaut"
@@ -488,7 +491,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             <div className="flex flex-col items-center gap-1">
               <button onClick={() => { customBgData ? setBgMode('custom') : customBgInputRef.current?.click(); }}
                 onDoubleClick={() => customBgInputRef.current?.click()}
-                title="Charger le scan de votre tissu"
+                title="Charger le scan de votre tissu (PNG ou JPG)"
                 className={`w-7 h-7 rounded border-2 transition-all flex items-center justify-center text-[9px] font-bold ${bgMode === 'custom' ? 'border-blue-500 ring-2 ring-blue-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
                 style={{
                   backgroundColor: '#e5e7eb',
@@ -498,7 +501,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
                 }}>
                 {!customBgData && <span style={{ fontSize: '14px' }}>&#128247;</span>}
               </button>
-              <span className="text-[14px] text-gray-500 leading-tight text-center">votre<br/>tissu</span>
+              <span className="text-[14px] text-gray-500 leading-tight text-center">votre tissu<br/><span className="text-[9px] text-gray-400">(PNG, JPG)</span></span>
               {customBgData && (
                 <>
                   <input type="range" min="0.5" max="2" step="0.1" value={customBgScale}

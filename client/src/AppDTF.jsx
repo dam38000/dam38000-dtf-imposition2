@@ -4,7 +4,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PRODUCT_FORMATS } from './lib/constants';
-import { roundToMultiple } from './lib/pricing';
+import { roundToMultiple, getPrixUnitaire, PRIX_TABLES } from './lib/pricing';
 import { useFiles } from './hooks/useFiles';
 import { useImposition } from './hooks/useImposition';
 import { useExport } from './hooks/useExport';
@@ -69,6 +69,11 @@ export default function AppDTF() {
 
   const rawSheets = impositionHook.stats ? impositionHook.stats.totalSheets : 0;
   const totalExemplaires = rawSheets > 0 ? roundToMultiple(rawSheets, selectedFormat) : 0;
+  const table = PRIX_TABLES[productMode];
+  const cleanFormat = selectedFormat.replace('+', '');
+  const priceFormat = cleanFormat === 'M1' ? '1M' : cleanFormat;
+  const prixUnitaire = table && totalExemplaires > 0 ? getPrixUnitaire(priceFormat, totalExemplaires, table) : null;
+  const prixTotal = prixUnitaire ? Math.round(prixUnitaire * totalExemplaires * 100) / 100 : null;
   const currentSheet = impositionHook.sheets[impositionHook.currentSheetIndex] || null;
 
   // ── Finesse : fichier sélectionné pour la modal ──
@@ -361,7 +366,7 @@ export default function AppDTF() {
         calcProgress={impositionHook.calcProgress}
         allowMove={allowMove} setSheets={impositionHook.setSheets}
         files={filesHook.files} stats={impositionHook.stats}
-        selectedFormat={selectedFormat} totalExemplaires={totalExemplaires}
+        selectedFormat={selectedFormat} totalExemplaires={totalExemplaires} prixTotal={prixTotal}
         showOptimalModal={impositionHook.showOptimalModal}
         setShowOptimalModal={impositionHook.setShowOptimalModal}
         setOptimalPanel={impositionHook.setOptimalPanel}
