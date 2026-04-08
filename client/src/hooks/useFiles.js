@@ -65,7 +65,7 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
         }
       }
     }
-    setUploadStatus(null);
+    setUploadStatus({ step: 'Préparation de l\'analyse...', fileName: '', current: 0, total: 0 });
   }, [setErrorAlert]);
 
   // ── Drag & Drop ──
@@ -148,7 +148,7 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
 
   return {
     files, setFiles,
-    uploadStatus,
+    uploadStatus, setUploadStatus,
     isDragging,
     fileInputRef,
     handleDragOver, handleDragLeave, handleDrop,

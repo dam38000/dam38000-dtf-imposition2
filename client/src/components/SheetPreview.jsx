@@ -21,9 +21,9 @@ export function SheetPreview({
     <main className="flex-1 flex flex-col h-full overflow-hidden">
 
       {/* ── Barre header ── */}
-      <div className="h-[220px] bg-white border-b border-gray-300 flex shadow-sm z-10 flex-shrink-0">
+      <div className="h-[185px] bg-white border-b border-gray-300 flex shadow-sm z-10 flex-shrink-0">
         {/* Colonne 1 : Tirage */}
-        <div className="w-[180px] border-r border-gray-200 flex flex-col items-center justify-start p-3 bg-gray-50 flex-shrink-0">
+        <div className="w-[240px] border-r border-gray-200 flex flex-col items-center justify-start p-3 bg-gray-50 flex-shrink-0">
           <div className="w-full px-3 py-2 bg-gray-400 text-white text-sm font-bold rounded shadow text-center cursor-not-allowed">
             Accueil
           </div>
@@ -34,6 +34,7 @@ export function SheetPreview({
           </div>
           <button onClick={() => { if (files.length > 0) { setShowOptimalModal(true); setOptimalPanel([]); } }}
             disabled={files.length === 0}
+            title={files.length === 0 ? "Ajoutez des fichiers pour accéder à l'optimisation" : "Trouver la combinaison de formats de feuille la plus économique pour votre tirage"}
             className={`mt-3 px-5 py-2 text-sm font-bold rounded-full shadow transition-colors
             ${files.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white animate-pulse-fast' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
             Voir les montages les plus economiques
@@ -45,14 +46,17 @@ export function SheetPreview({
           <div className="p-2 border-b border-gray-100">
             <div className="flex gap-1">
               <button onClick={handleExportCut} disabled={sheets.length === 0}
+                title={sheets.length === 0 ? "Lancez un montage avant d'exporter" : "Exporter un PDF avec les traits de coupe pour la découpe à la massicot"}
                 className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                 <Icons.Scissors /> Coupe
               </button>
               <button onClick={handleExportComposite} disabled={sheets.length === 0}
+                title={sheets.length === 0 ? "Lancez un montage avant d'exporter" : "Exporter un PDF composite 300 DPI avec tous les dessins assemblés sur la planche"}
                 className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                 <Icons.Layers /> Composite
               </button>
               <button onClick={handleExportPNG} disabled={sheets.length === 0}
+                title={sheets.length === 0 ? "Lancez un montage avant d'exporter" : "Exporter la planche en PNG 300 DPI et la charger dans votre espace de travail"}
                 className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1 font-bold text-[9px] transition-all ${sheets.length > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                 <Icons.Download /> Charger le PNG dans mon espace
               </button>
@@ -67,33 +71,37 @@ export function SheetPreview({
                 </div>
               ) : stats && stats.details ? (
                 stats.details.map(d => (
-                  <div key={d.id} className="bg-white border border-gray-200 rounded p-1.5 flex gap-2 shadow-sm h-[60px] items-center">
+                  <div key={d.id} className="bg-white border border-gray-200 rounded px-1.5 py-0.5 flex gap-2 shadow-sm items-center">
                     <div className="w-[40px] h-[40px] flex-shrink-0 bg-gray-50 rounded overflow-hidden flex items-center justify-center">
                       <img src={d.src} alt={d.name} className="max-w-full max-h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[11px] font-bold text-gray-700 truncate">{d.name}</div>
-                      <div className="text-gray-600 flex justify-between leading-tight" style={{ fontSize: '13px' }}>
-                        <span>{d.req} cmd</span>
-                        <span className="font-bold">{d.made} fab</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-0.5 mt-0.5">
-                        <div className={`h-0.5 rounded-full ${d.made >= d.req ? 'bg-green-500' : 'bg-blue-500'}`}
-                          style={{ width: `${Math.min(100, (d.made / d.req) * 100)}%` }} />
+                      <div className="text-[18px] font-bold text-gray-700 truncate">{d.name}</div>
+                      <div className="font-bold text-gray-600 flex gap-3 leading-tight" style={{ fontSize: '13px' }}>
+                        <span>Qté cdé : <strong>{d.req}</strong></span>
+                        <span>Qté fab : <strong>{d.made}</strong></span>
+                        <div className="flex-1 flex items-center">
+                          <div className="w-full bg-gray-200 rounded-full h-0.5">
+                            <div className={`h-0.5 rounded-full ${d.made >= d.req ? 'bg-green-500' : 'bg-blue-500'}`}
+                              style={{ width: `${Math.min(100, (d.made / d.req) * 100)}%` }} />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 ))
               ) : (
                 files.map(f => (
-                  <div key={f.id} className="bg-white border border-gray-200 rounded p-1 flex gap-1.5 shadow-sm h-[56px] items-center">
+                  <div key={f.id} className="bg-white border border-gray-200 rounded px-1.5 py-0.5 flex gap-2 shadow-sm items-center">
                     <div className="w-[40px] h-[40px] flex-shrink-0 bg-gray-50 rounded overflow-hidden flex items-center justify-center">
                       <img src={f.thumbnailUrl} alt={f.name} className="max-w-full max-h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[9px] font-bold text-gray-700 truncate">{f.name}</div>
-                      <div className="text-[8px] text-gray-400">{f.width}x{f.height}mm</div>
-                      <div className="text-[8px] text-gray-500">x{f.quantity}</div>
+                      <div className="text-[15px] font-bold text-gray-700 truncate">{f.name}</div>
+                      <div className="font-bold text-[13px] text-gray-500 flex gap-4">
+                        <span>Qté cdé : <strong>{f.quantity}</strong></span>
+                        <span className="text-gray-300">Qté fab : —</span>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -106,12 +114,12 @@ export function SheetPreview({
       {/* ── Options rotation ── */}
       <div className="w-full flex justify-center border-b border-gray-300 bg-gray-200 py-2 z-20 flex-shrink-0">
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
+          <label title="Autoriser l'algorithme à pivoter les dessins à 90° pour optimiser le placement" className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
             <input type="checkbox" checked={allowRotation} onChange={e => { setAllowRotation(e.target.checked); resetPlanche(); }}
               className="w-4 h-4 accent-blue-600" />
             Autoriser la rotation
           </label>
-          <label className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
+          <label title="Activer le déplacement manuel des dessins sur la planche (double-clic pour pivoter)" className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer select-none">
             <input type="checkbox" checked={allowMove} onChange={e => setAllowMove(e.target.checked)}
               className="w-4 h-4 accent-orange-600" />
             cocher la case pour deplacer ou tourner les dessins (double clic)
@@ -121,6 +129,41 @@ export function SheetPreview({
 
       {/* ── Zone preview ── */}
       <div ref={previewRef} className="flex-1 relative w-full overflow-hidden">
+
+        {/* Panneau d'aide — affiché uniquement si aucune planche et aucune erreur */}
+        {sheets.length === 0 && impositionErrors.length === 0 && (
+          <div className="absolute inset-0 z-20 flex items-start justify-center pt-4 px-8 select-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl px-8 pt-5 pb-6">
+              <h2 className="text-2xl font-bold uppercase tracking-widest text-gray-500 text-center border-b border-gray-200 pb-3 mb-5">
+                Utilisation du programme de montage
+              </h2>
+              <div className="grid grid-cols-2 gap-x-12 gap-y-5 text-base text-gray-600">
+                <div>
+                  <div className="font-bold text-gray-800 text-lg mb-1">1 — Charger vos fichiers</div>
+                  <p className="leading-relaxed mb-1">Chargez vos fichiers ou déposez-les dans l'espace vert clair. Par défaut, les fichiers seront rognés à 1mm du bord. Si vous ne le souhaitez pas, décochez la case correspondante. Vous pouvez rogner chaque dessin individuellement ou globalement.</p>
+                  <p>• Le bouton <span className="font-semibold text-gray-700">"Remplir"</span> permet de remplir la feuille à condition qu'un seul dessin soit chargé.</p>
+                </div>
+                <div>
+                  <div className="font-bold text-gray-800 text-lg mb-1">3 — Montage le plus économique</div>
+                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Voir les montages les plus économiques"</span> calcule les prix pour tous les types et formats. Le tableau vous affichera toutes les possibilités pour choisir la plus économique.</p>
+                  <p className="mt-2 text-gray-500 italic">Nota : le classement de la solution la plus économique est basé sur le prix catalogue.</p>
+                </div>
+                <div>
+                  <div className="font-bold text-gray-800 text-lg mb-1">2 — Faire une imposition</div>
+                  <p>• Choisissez le format (en haut)</p>
+                  <p>• Définissez la bordure (défaut 6mm)</p>
+                  <p>• Choisissez le type de montage : <span className="font-bold text-gray-700">Massicotable — Non Massicotable — Imbrication</span></p>
+                  <p>• Lancez le montage</p>
+                  <p className="mt-1">Une fenêtre vous proposera d'autres agencements avec le même nombre d'exemplaires.</p>
+                </div>
+                <div>
+                  <div className="font-bold text-gray-800 text-lg mb-1">4 — Export</div>
+                  <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Export dans votre espace"</span> exporte le montage vers printmytransfer.fr. Vous pouvez aussi exporter le fichier de découpe.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Overlay horloge pendant calcul */}
         {(isOptimalRunning || isCalculating) && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center text-center pointer-events-none">
@@ -145,24 +188,7 @@ export function SheetPreview({
           </div>
         )}
         <div className="w-full h-full flex flex-col items-center justify-center">
-          {/* Navigation planches */}
-          {sheets.length > 1 && (
-            <div className="flex items-center gap-3 mb-2 flex-shrink-0">
-              <button onClick={() => setCurrentSheetIndex(Math.max(0, currentSheetIndex - 1))}
-                disabled={currentSheetIndex === 0}
-                className={`px-3 py-1 rounded text-sm font-bold ${currentSheetIndex === 0 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50'}`}>
-                &#9664;
-              </button>
-              <span className="text-sm font-bold text-gray-700">
-                Planche {currentSheetIndex + 1} / {sheets.length}
-              </span>
-              <button onClick={() => setCurrentSheetIndex(Math.min(sheets.length - 1, currentSheetIndex + 1))}
-                disabled={currentSheetIndex === sheets.length - 1}
-                className={`px-3 py-1 rounded text-sm font-bold ${currentSheetIndex === sheets.length - 1 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50'}`}>
-                &#9654;
-              </button>
-            </div>
-          )}
+          {/* Navigation planches supprimée */}
           {/* Planche */}
           <div style={{ width: `${sheetSize.w * previewScale}px`, height: `${sheetSize.h * previewScale}px` }}>
           <div className="relative bg-white shadow-xl"
@@ -182,7 +208,7 @@ export function SheetPreview({
                       {impositionErrors.map((e, i) => <div key={i}>{e}</div>)}
                     </div>
                   ) : (
-                    <div className="text-gray-300"
+                    <div className="text-gray-200 select-none"
                       style={{ fontSize: `${Math.max(12, 16 / previewScale)}px` }}>
                       {sheetSize.w} x {sheetSize.h} mm
                     </div>
@@ -223,20 +249,30 @@ export function SheetPreview({
                       }));
                     } : undefined}>
                     <div className="w-full h-full relative flex items-center justify-center">
-                      <div className="flex items-center justify-center relative"
-                        style={{
-                          width: `${(item.rotated ? item.realH : item.realW) + margin * 2}px`,
-                          height: `${(item.rotated ? item.realW : item.realH) + margin * 2}px`,
-                        }}>
+                      {isImbrication ? (
                         <img src={item.src} alt="" draggable={false}
-                          className={`relative z-10 ${!isImbrication ? 'bg-blue-100' : ''}`}
+                          className="relative z-10"
                           style={{
                             width: `${item.realW}px`, height: `${item.realH}px`,
                             maxWidth: 'none', maxHeight: 'none', objectFit: 'fill',
                             transform: item.rotated ? 'rotate(90deg)' : 'none',
-                            filter: isImbrication ? 'url(#outline-effect)' : undefined,
+                            filter: 'url(#outline-effect)',
                           }} />
-                      </div>
+                      ) : (
+                        <div className="flex items-center justify-center relative"
+                          style={{
+                            width: `${(item.rotated ? item.realH : item.realW) + margin * 2}px`,
+                            height: `${(item.rotated ? item.realW : item.realH) + margin * 2}px`,
+                          }}>
+                          <img src={item.src} alt="" draggable={false}
+                            className="relative z-10 bg-blue-100"
+                            style={{
+                              width: `${item.realW}px`, height: `${item.realH}px`,
+                              maxWidth: 'none', maxHeight: 'none', objectFit: 'fill',
+                              transform: item.rotated ? 'rotate(90deg)' : 'none',
+                            }} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

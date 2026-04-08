@@ -58,22 +58,19 @@ export function SidebarDTF({
       <div className="p-2 bg-gray-50 border-b border-gray-300 shadow-md z-20 flex-shrink-0">
         <div className="flex gap-2">
           <button onClick={() => { setImpositionMode('massicot'); resetPlanche(); }}
-            className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
+            className={`flex-1 h-[56px] flex items-center justify-center border-2 rounded transition-all
               ${impositionMode === 'massicot' ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
-            <Icons.Layout />
-            <span className="font-bold text-[14px] mt-0.5">Massicotable</span>
+            <span className="font-bold text-[16px] leading-tight text-center">Montage<br/>massicotable</span>
           </button>
           <button onClick={() => { setImpositionMode('imbrique'); resetPlanche(); }}
-            className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
+            className={`flex-1 h-[56px] flex items-center justify-center border-2 rounded transition-all
               ${impositionMode === 'imbrique' ? 'border-purple-600 bg-purple-50 text-purple-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
-            <Icons.Scissors />
-            <span className="font-bold text-[14px] mt-0.5">Non Massicotable</span>
+            <span className="font-bold text-[16px] leading-tight text-center">Montage<br/>non massicotable</span>
           </button>
           <button onClick={() => { setImpositionMode('imbrication'); resetPlanche(); }}
-            className={`flex-1 h-[50px] flex flex-col items-center justify-center border-2 rounded transition-all
+            className={`flex-1 h-[56px] flex items-center justify-center border-2 rounded transition-all
               ${impositionMode === 'imbrication' ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}>
-            <Icons.Puzzle />
-            <span className="font-bold text-[14px] mt-0.5">Imbrication</span>
+            <span className="font-bold text-[16px] leading-tight text-center">Montage<br/>en imbrication</span>
           </button>
         </div>
       </div>
@@ -130,11 +127,11 @@ export function SidebarDTF({
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-800 truncate">{f.name}</span>
                 <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                  {/* Bouton Finesse — texte rouge clignotant si détectées, grisé sinon */}
+                  {/* Bouton Visualisation / Finesse */}
                   <button onClick={() => openFinesse(f.id)}
-                    className={`text-[13px] font-bold px-2 py-0.5 rounded transition-all
-                      ${f.hasIssues === true ? 'text-red-600 bg-red-50 border border-red-300 animate-[pulse_0.6s_ease-in-out_infinite]' : 'text-gray-400 bg-gray-100 border border-gray-200'}`}>
-                    finesses
+                    className={`text-[11px] font-bold px-2 py-0.5 rounded transition-all
+                      ${f.hasIssues === true && !f.correctedSrc && !f.corrected ? 'text-white bg-red-500 border border-red-400 animate-[pulse_0.6s_ease-in-out_infinite]' : f.hasIssues === false || f.correctedSrc || f.corrected ? 'text-white bg-green-500 border border-green-400' : 'text-gray-400 bg-gray-100 border border-gray-200'}`}>
+                    Visualisation / Finesse
                   </button>
                   <button onClick={() => cropFile(f.id, true)} className="text-gray-400 hover:text-green-600 transition-colors p-0.5">
                     <Icons.Crop size={12} />

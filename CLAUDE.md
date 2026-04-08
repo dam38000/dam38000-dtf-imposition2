@@ -106,11 +106,7 @@ c5787d8 Etape 5b : Correction finesses/reserves + optimisation demi-res
 ```
 
 ## Problemes connus
-- **Correction finesses** : n'a jamais fonctionne correctement. Causes identifiees :
-  1. `index.js` ne montait pas la route `/api/analyze` (corrige mais pas commite)
-  2. Timeout Puppeteer 30s trop court (corrige en 5min mais pas commite)
-  3. Algorithme trop subtil (+2px) → reecrit en multi-passes (+6px, pas commite)
-  Ces 3 fixes n'ont jamais ete testes ensemble.
+- 
 
 ## Fichier de reference
 Le fichier original est a `D:\Fichier Montage Pur\montage.html`.

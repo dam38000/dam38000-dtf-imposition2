@@ -94,7 +94,13 @@ export default function AppDTF() {
 
     const allCropped = filesHook.files.length > 0 && filesHook.files.every(f => f.cropped);
     const unanalyzed = filesHook.files.filter(f => f.cropped && !analyzedRef.current.has(f.id) && f.hasIssues === undefined);
-    if (!allCropped || unanalyzed.length === 0) return;
+    if (!allCropped || unanalyzed.length === 0) {
+      // Plus rien à analyser — fermer l'overlay s'il était en attente
+      if (allCropped && unanalyzed.length === 0 && filesHook.uploadStatus) {
+        filesHook.setUploadStatus(null);
+      }
+      return;
+    }
 
     // Délai de 1s après le dernier crop pour laisser le serveur finir les I/O
     analyzeTimerRef.current = setTimeout(() => {
@@ -102,7 +108,7 @@ export default function AppDTF() {
         for (let i = 0; i < unanalyzed.length; i++) {
           const f = unanalyzed[i];
           analyzedRef.current.add(f.id);
-          setFinesseStatus({ step: 'Analyse des finesses...', fileName: f.name, current: i + 1, total: unanalyzed.length });
+          filesHook.setUploadStatus({ step: 'Analyse des finesses...', fileName: f.name, current: i + 1, total: unanalyzed.length });
           console.log(`[finesse-auto] Analyse serveur de ${f.name}, seuil=${finesse}mm`);
           try {
             const result = await analyzeFileServer(f.id);
@@ -117,7 +123,7 @@ export default function AppDTF() {
             console.error(`[finesse-auto] Erreur pour ${f.name}:`, err);
           }
         }
-        setFinesseStatus(null);
+        filesHook.setUploadStatus(null);
         setLastAnalyzedFinesse(finesse);
         setLastAnalyzedFileCount(prev => Math.max(prev, filesHook.files.length));
       };
@@ -140,7 +146,7 @@ export default function AppDTF() {
     analyzedRef.current.clear();
     for (let i = 0; i < filesHook.files.length; i++) {
       const f = filesHook.files[i];
-      setFinesseStatus({ step: 'Analyse des finesses...', fileName: f.name, current: i + 1, total: filesHook.files.length });
+      filesHook.setUploadStatus({ step: 'Analyse des finesses...', fileName: f.name, current: i + 1, total: filesHook.files.length });
       console.log(`[finesse] Re-analyse serveur de ${f.name}, seuil=${finesse}mm`);
       try {
         const result = await analyzeFileServer(f.id);
@@ -157,7 +163,7 @@ export default function AppDTF() {
         console.error(`[finesse] Erreur pour ${f.name}:`, err);
       }
     }
-    setFinesseStatus(null);
+    filesHook.setUploadStatus(null);
     setLastAnalyzedFinesse(finesse);
     setLastAnalyzedFileCount(filesHook.files.length);
     setIsAnalyzing(false);
@@ -242,6 +248,7 @@ export default function AppDTF() {
       filesHook.setFiles(prev => prev.map(ff => ff.id !== fileId ? ff : {
         ...ff,
         correctedSrc: null,
+        corrected: true,
         thumbnailUrl: `/uploads/${fileId}/thumbnail.png?t=${Date.now()}`,
       }));
 
@@ -260,7 +267,38 @@ export default function AppDTF() {
   };
 
   // ── Fermer la modal finesse ──
-  const closeFinesseModal = () => {
+  const closeFinesseModal = async () => {
+    // Si une correction était en cours mais non enregistrée, annuler côté serveur
+    const f = finesseFileId ? filesHook.files.find(x => x.id === finesseFileId) : null;
+    if (f && f.correctedSrc) {
+      try {
+        await fetch('/api/analyze/discard-correction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: f.id }),
+        });
+      } catch (err) {
+        console.error('[finesse] Erreur discard:', err);
+      }
+      // Restaurer l'état client + re-analyser pour récupérer l'overlay
+      const ts = Date.now();
+      filesHook.setFiles(prev => prev.map(ff => ff.id !== f.id ? ff : {
+        ...ff,
+        correctedSrc: null,
+        thumbnailUrl: `/uploads/${f.id}/thumbnail.png?t=${ts}`,
+      }));
+      try {
+        const analyzeResult = await analyzeFileServer(f.id);
+        filesHook.setFiles(prev => prev.map(ff => ff.id !== f.id ? ff : {
+          ...ff,
+          overlaySrc: analyzeResult.overlay_url + '?t=' + Date.now(),
+          pureDefectsSrc: analyzeResult.pure_defects_url + '?t=' + Date.now(),
+          hasIssues: analyzeResult.has_finesses,
+        }));
+      } catch (err) {
+        console.error('[finesse] Erreur re-analyse après discard:', err);
+      }
+    }
     setFinesseFileId(null);
   };
 
@@ -351,7 +389,7 @@ export default function AppDTF() {
         applyOptimalResult={impositionHook.applyOptimalResult}
       />
 
-      <UploadOverlay uploadStatus={filesHook.uploadStatus || finesseStatus} />
+      <UploadOverlay uploadStatus={filesHook.uploadStatus} />
 
       <QuantityWarning
         quantityWarning={impositionHook.quantityWarning}

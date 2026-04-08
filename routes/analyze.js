@@ -222,9 +222,15 @@ router.post('/correct-finesses', (req, res) => {
     //    thick_masked = thick_full avec alpha = zone_mask
     im(`magick "${t('thick_full')}" "${t('zone_mask')}" -compose CopyOpacity -composite PNG32:"${t('thick_masked')}"`);
     //    Composer : originale en base, thick_masked par-dessus
-    im(`magick "${inputPath}" "${t('thick_masked')}" -compose Over -composite PNG32:"${correctedPath}"`);
+    im(`magick "${inputPath}" "${t('thick_masked')}" -compose Over -composite PNG32:"${t('composed')}"`);
 
-    console.log(`[Correct Finesses IM] OK → ${correctedPath}`);
+    // 5) Nettoyage des poussières : ouverture morphologique sur l'alpha
+    //    Erode puis Dilate supprime les pixels isolés (< 2px)
+    im(`magick "${t('composed')}" -alpha extract "${t('alpha_pre_clean')}"`);
+    im(`magick "${t('alpha_pre_clean')}" -morphology Open Disk:1 "${t('alpha_cleaned')}"`);
+    im(`magick "${t('composed')}" "${t('alpha_cleaned')}" -compose CopyOpacity -composite PNG32:"${correctedPath}"`);
+
+    console.log(`[Correct Finesses IM] OK (+ nettoyage poussières) → ${correctedPath}`);
 
     // Regénérer la thumbnail : même taille que converted.png divisé par 2 (= 150 DPI)
     const thumbnailPath = path.join(jobDir, 'thumbnail.png');
@@ -236,7 +242,7 @@ router.post('/correct-finesses', (req, res) => {
     console.log(`[Correct Finesses IM] Thumbnail regénérée: ${thumbnailPath} (${thumbW}x${thumbH} depuis converted ${cw}x${ch})`);
 
     // Sauvegarder les images debug
-    for (const name of ['alpha', 'finesse_mask', 'zone_mask', 'alpha_dilated', 'rgb_white', 'rgb_propagated', 'rgb_final', 'thick_full', 'thick_masked']) {
+    for (const name of ['alpha', 'finesse_mask', 'zone_mask', 'alpha_dilated', 'rgb_white', 'rgb_propagated', 'rgb_final', 'thick_full', 'thick_masked', 'composed', 'alpha_pre_clean', 'alpha_cleaned']) {
       const src = t(name);
       const dst = path.join(jobDir, `debug_correct_${name}.png`);
       if (fs.existsSync(src)) {
@@ -253,6 +259,42 @@ router.post('/correct-finesses', (req, res) => {
 
   } catch (err) {
     console.error('[Correct Finesses IM]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// POST /discard-correction — Annuler la correction (supprimer corrected_preview, restaurer thumbnail)
+// ============================================================
+router.post('/discard-correction', (req, res) => {
+  const { file_id } = req.body;
+  if (!file_id) return res.status(400).json({ error: 'file_id requis' });
+
+  const jobDir = path.join(__dirname, '..', 'uploads', file_id);
+  const correctedPath = path.join(jobDir, 'corrected_preview.png');
+  const convertedPath = path.join(jobDir, 'converted.png');
+  const thumbnailPath = path.join(jobDir, 'thumbnail.png');
+
+  try {
+    // Supprimer corrected_preview.png
+    if (fs.existsSync(correctedPath)) {
+      fs.unlinkSync(correctedPath);
+      console.log(`[Discard] Supprimé: ${correctedPath}`);
+    }
+
+    // Regénérer la thumbnail depuis converted.png
+    if (fs.existsSync(convertedPath)) {
+      const dims = im(`magick identify -format "%wx%h" "${convertedPath}"`);
+      const [cw, ch] = dims.split('x').map(Number);
+      const thumbW = Math.round(cw / 2);
+      const thumbH = Math.round(ch / 2);
+      im(`magick "${convertedPath}" -resize ${thumbW}x${thumbH}! -density 150 PNG32:"${thumbnailPath}"`);
+      console.log(`[Discard] Thumbnail restaurée depuis converted.png (${thumbW}x${thumbH})`);
+    }
+
+    res.json({ message: 'Correction annulée' });
+  } catch (err) {
+    console.error('[Discard]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

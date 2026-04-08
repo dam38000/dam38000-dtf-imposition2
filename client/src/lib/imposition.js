@@ -67,7 +67,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
 
   // MODE IMBRICATION
   if (currentMode === 'imbrication') {
-    const IMB_SCALE = 0.5;
+    const IMB_SCALE = 1;
     const masksCache = {};
     const packerMarginPx = Math.ceil((safeMargin / 2) * IMB_SCALE);
     const packerPageW = Math.ceil(pageW * IMB_SCALE) + packerMarginPx * 2;

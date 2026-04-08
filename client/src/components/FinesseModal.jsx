@@ -1,32 +1,27 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Icons } from './Icons';
 
-// ── Conversion HSL ──
-function hexToHsl(hex) {
-  let r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
-  const max = Math.max(r,g,b), min = Math.min(r,g,b);
-  let h = 0, s = 0, l = (max+min)/2;
-  if (max !== min) {
-    const d = max-min;
-    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+// ── Conversion HSV ↔ Hex (color picker style Photoshop) ──
+function hexToHsv(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max - min;
+  let h = 0;
+  if (d !== 0) {
     if (max===r) h = ((g-b)/d + (g<b?6:0))/6;
     else if (max===g) h = ((b-r)/d+2)/6;
     else h = ((r-g)/d+4)/6;
   }
-  return { h: h*360, s: s*100, l: l*100 };
+  const s = max === 0 ? 0 : d/max;
+  return { h: Math.round(h*360), s: Math.round(s*100), v: Math.round(max*100) };
 }
-function hslToHex(h, s, l) {
-  h = ((h%360)+360)%360; s = Math.max(0,Math.min(100,s))/100; l = Math.max(0,Math.min(100,l))/100;
-  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+function hsvToHex(h, s, v) {
+  h = ((h%360)+360)%360; s = Math.max(0,Math.min(100,s))/100; v = Math.max(0,Math.min(100,v))/100;
+  const c = v*s, x = c*(1-Math.abs((h/60)%2-1)), m = v-c;
   let r,g,b;
   if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}else if(h<180){r=0;g=c;b=x;}
   else if(h<240){r=0;g=x;b=c;}else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
   const hex2=v=>Math.round((v+m)*255).toString(16).padStart(2,'0');
   return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
-}
-function adjustColor(hex, dh, ds, dl) {
-  const {h,s,l} = hexToHsl(hex);
-  return hslToHex(h+dh, s+ds, l+dl);
 }
 
 const ZOOM = 5;
@@ -46,24 +41,81 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   const correctionIntensity = 1.3; // intensité fixe
   const [showConfirm, setShowConfirm] = useState(false);
   const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
-  const [bgTexture, setBgTexture] = useState(false); // texture tissu
-  const [hslAdjust, setHslAdjust] = useState({ h: 0, s: 0, l: 0 }); // ajustement HSL des patches
+  const [bgTexture, setBgTexture] = useState(true); // texture tissu
+  const texBlend = 'luminosity';
+  const [showOverlay, setShowOverlay] = useState(true); // afficher overlay finesses
+  // Couleurs personnalisables (sauvegardées en localStorage)
 
-  const PATCH_DEFAULTS = ['#2563eb', '#dc2626', '#16a34a', '#1a1a1a', '#ff9800', '#9c27b0'];
-  const [patchColors, setPatchColors] = useState(() =>
-    PATCH_DEFAULTS.map((def, i) => localStorage.getItem(`finesse_color_${i}`) || def)
-  );
-  const patchInputRefs = useRef([]);
+  const [patchColors, setPatchColors] = useState(() => [
+    localStorage.getItem('finesse_patch0') || '#2563eb',
+    localStorage.getItem('finesse_patch1') || '#dc2626',
+    localStorage.getItem('finesse_patch2') || '#16a34a',
+    localStorage.getItem('finesse_patch3') || '#1a1a1a',
+    localStorage.getItem('finesse_patch4') || '#ff9800',
+    localStorage.getItem('finesse_patch5') || '#9c27b0',
+  ]);
 
   const savePatchColor = (idx, color) => {
     setPatchColors(prev => { const next = [...prev]; next[idx] = color; return next; });
-    localStorage.setItem(`finesse_color_${idx}`, color);
+    localStorage.setItem(`finesse_patch${idx}`, color);
+    setBgColor(color);
   };
+  const patchInputRefs = useRef([]);
+
+  // Éditeur couleur (HSV) — style Photoshop
+  const [hslEditor, setHslEditor] = useState(null); // { idx, h, s, v, original }
+  const areaRef = useRef(null);
+  const areaDragging = useRef(false);
+  const openHslEditor = (idx) => {
+    const { h, s, v } = hexToHsv(patchColors[idx]);
+    setHslEditor({ idx, h, s, v, original: patchColors[idx] });
+  };
+  const confirmHslEditor = () => {
+    if (!hslEditor) return;
+    savePatchColor(hslEditor.idx, hsvToHex(hslEditor.h, hslEditor.s, hslEditor.v));
+    setHslEditor(null);
+  };
+  const cancelHslEditor = () => {
+    if (!hslEditor) return;
+    savePatchColor(hslEditor.idx, hslEditor.original);
+    setHslEditor(null);
+  };
+  const handleAreaPointer = useCallback((e) => {
+    const rect = areaRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const s = Math.round(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)));
+    const v = Math.round(Math.max(0, Math.min(100, 100 - ((e.clientY - rect.top) / rect.height) * 100)));
+    setHslEditor(prev => {
+      const updated = { ...prev, s, v };
+      setBgColor(hsvToHex(updated.h, updated.s, updated.v));
+      return updated;
+    });
+  }, []);
 
   const leftPanelRef = useRef(null);
   const rightPanelRef = useRef(null);
   const lensCanvasRef = useRef(null);
   const lensRef = useRef(null);
+
+  // Drag-to-pan
+  const isDragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, panel: null });
+
+  const handleMouseDown = useCallback((panelKey, e) => {
+    const panel = (panelKey === 'left' ? leftPanelRef : rightPanelRef).current;
+    if (!panel) return;
+    isDragging.current = true;
+    dragStart.current = { x: e.clientX, y: e.clientY, scrollLeft: panel.scrollLeft, scrollTop: panel.scrollTop, panel };
+    panel.style.cursor = 'grabbing';
+    e.preventDefault();
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDragging.current && dragStart.current.panel) {
+      dragStart.current.panel.style.cursor = '';
+    }
+    isDragging.current = false;
+  }, []);
 
   // Images HD off-screen pour la loupe
   const hdImgRef = useRef(null);
@@ -92,7 +144,22 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
     }
   }, [file?.id, file?.overlaySrc, file?.correctedSrc]);
 
+  const LOUPE_ACTIVE = false; // passer à true pour réactiver la loupe
+
   const handleMouseMove = useCallback((panelKey, e) => {
+    // Drag-to-pan en priorité
+    if (isDragging.current && dragStart.current.panel) {
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      dragStart.current.panel.scrollLeft = dragStart.current.scrollLeft - dx;
+      dragStart.current.panel.scrollTop = dragStart.current.scrollTop - dy;
+      const lensEl = lensRef.current;
+      if (lensEl) lensEl.style.display = 'none';
+      return;
+    }
+
+    if (!LOUPE_ACTIVE) return; // loupe suspendue
+
     const panelRef = panelKey === 'left' ? leftPanelRef : rightPanelRef;
     const panel = panelRef.current;
     const canvas = lensCanvasRef.current;
@@ -302,45 +369,61 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
       >
         {/* Header */}
         <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <h3 className="font-bold text-lg text-gray-800 truncate max-w-[400px]">
-              Inspection : {file.name}
-            </h3>
-            {/* Slider zoom */}
-            <div className="flex items-center gap-1 border-l border-gray-300 pl-3">
-              <span className="text-[9px] text-gray-500">Zoom</span>
+          <div className="flex items-center gap-2">
+
+            {/* Groupe Zoom */}
+            <div title="Agrandir ou réduire l'affichage de l'image (ne modifie pas la résolution)" className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Zoom</span>
               <input type="range" min="0.5" max="2" step="0.1" value={zoomLevel}
                 onChange={e => setZoomLevel(parseFloat(e.target.value))}
-                className="w-20 accent-gray-600" />
-              <span className="text-[10px] font-bold text-gray-700 w-6">x{zoomLevel}</span>
+                className="w-24 accent-gray-600" />
+              <span className="text-[11px] font-bold text-gray-700 w-7 text-right">×{zoomLevel}</span>
             </div>
-            <button
-              onClick={handleCorrect}
-              disabled={isCorrecting || !file.hasIssues || file.correctedSrc}
-              className={`px-4 py-1.5 rounded font-bold text-xs flex items-center gap-2 transition-all ${file.hasIssues && !isCorrecting && !file.correctedSrc ? 'bg-fuchsia-600 text-white hover:bg-fuchsia-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-            >
-              <Icons.Maximize size={14} /> {isCorrecting ? 'Correction en cours...' : file.correctedSrc ? 'Déjà corrigé' : 'Corriger Finesses'}
-            </button>
-            <button
-              onClick={handleExpand}
-              disabled={isExpanding}
-              className={`px-4 py-1.5 rounded font-bold text-xs flex items-center gap-2 transition-all ${!isExpanding ? 'bg-blue-600 text-white hover:bg-blue-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-            >
-              <Icons.Maximize size={14} /> {isExpanding ? 'Épaississement...' : 'Bordure'}
-            </button>
+
+            <div className="w-px h-7 bg-gray-200 mx-1" />
+
+            {/* Groupe Actions finesses */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+              <button
+                onClick={handleCorrect}
+                disabled={isCorrecting || !file.hasIssues || file.correctedSrc}
+                title={!file.hasIssues ? "Aucune finesse détectée sur ce fichier" : file.correctedSrc ? "Ce fichier a déjà été corrigé" : "Épaissir automatiquement les traits fins détectés pour améliorer la qualité d'impression DTF"}
+                className={`px-3 py-1 rounded-md font-bold text-xs flex items-center gap-1.5 transition-all ${file.hasIssues && !isCorrecting && !file.correctedSrc ? 'bg-fuchsia-600 text-white hover:bg-fuchsia-700 shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Icons.Maximize size={12} />
+                {isCorrecting ? 'Correction…' : file.correctedSrc ? 'Déjà corrigé' : 'Corriger Finesses'}
+              </button>
+              <button
+                onClick={() => setShowOverlay(!showOverlay)}
+                disabled={!file.overlaySrc}
+                title={!file.overlaySrc ? "Les finesses ont été corrigées — l'overlay n'est plus disponible" : showOverlay ? "Masquer la surimpression verte des finesses détectées" : "Afficher en vert les zones de finesses détectées sur l'image"}
+                className={`px-3 py-1 rounded-md font-bold text-xs transition-all ${!file.overlaySrc ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : showOverlay ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm ring-2 ring-green-300' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+              >
+                Affichage Finesses
+              </button>
+            </div>
+
+            <div className="w-px h-7 bg-gray-200 mx-1" />
+
+            {/* Enregistrer */}
             <button
               onClick={handleSave}
               disabled={isSaving || !file.correctedSrc}
-              className={`px-4 py-1.5 rounded font-bold text-xs flex items-center gap-2 transition-all ${file.correctedSrc && !isSaving ? 'bg-green-600 text-white hover:bg-green-700 shadow' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              title={!file.correctedSrc ? "Aucune correction à enregistrer" : "Sauvegarder l'image corrigée — remplace l'original pour l'imposition"}
+              className={`px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all ${file.correctedSrc && !isSaving ? 'bg-green-600 text-white hover:bg-green-700 shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
             >
-              <Icons.Save size={14} /> {isSaving ? 'Enregistrement...' : 'Enregistrer'}
+              <Icons.Save size={13} />
+              {isSaving ? 'Enregistrement…' : 'Enregistrer'}
             </button>
+
           </div>
+
           <button
             onClick={handleRequestClose}
-            className="bg-red-600 text-white rounded-full p-1 shadow hover:bg-red-700 transition-colors"
+            title="Fermer la fenêtre de correction des finesses"
+            className="bg-red-500 text-white rounded-full p-1.5 shadow hover:bg-red-600 transition-colors ml-3"
           >
-            <Icons.X size={16} />
+            <Icons.X size={14} />
           </button>
         </div>
 
@@ -349,59 +432,33 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
 
           {/* Barre de couleurs de fond (côté gauche) */}
           <div className="flex flex-col gap-1.5 py-2 flex-shrink-0">
-            {/* 6 patches tous personnalisables */}
             {patchColors.map((color, idx) => {
-              const adjColor = adjustColor(color, hslAdjust.h, hslAdjust.s, hslAdjust.l);
+              const isCustom = true;
               return (
-                <div key={idx} className="relative w-7 h-7">
+                <div key={idx} className="relative">
                   <button
-                    onClick={() => setBgColor(adjColor)}
-                    onDoubleClick={() => patchInputRefs.current[idx]?.click()}
-                    title={`Patch ${idx + 1} — double-clic pour changer`}
-                    className={`w-7 h-7 rounded border-2 transition-all ${bgColor === adjColor ? 'border-white ring-2 ring-blue-500 scale-110' : 'border-gray-400 hover:scale-105'}`}
+                    onClick={() => setBgColor(color)}
+                    onDoubleClick={() => isCustom ? openHslEditor(idx) : patchInputRefs.current[idx]?.click()}
+                    title="Clic: appliquer — double-clic: changer couleur"
+                    className={`w-7 h-7 rounded border-2 transition-all ${bgColor === color ? 'border-white ring-2 ring-blue-500 scale-110' : 'border-gray-400 hover:scale-105'}`}
                     style={{
-                      backgroundColor: adjColor,
-                      backgroundImage: bgTexture ? 'url(/image4.png)' : undefined,
-                      backgroundSize: bgTexture ? 'cover' : undefined,
-                      backgroundBlendMode: bgTexture ? 'multiply' : undefined,
-                    }}
-                  />
-                  <input
-                    type="color"
-                    key={color}
-                    defaultValue={color}
-                    ref={el => patchInputRefs.current[idx] = el}
-                    onChange={e => { savePatchColor(idx, e.target.value); setBgColor(adjustColor(e.target.value, hslAdjust.h, hslAdjust.s, hslAdjust.l)); }}
-                    className="absolute opacity-0 pointer-events-none w-0 h-0"
-                  />
+                      backgroundColor: color,
+                      ...(bgTexture ? {
+                        backgroundImage: 'url(/image4.png)',
+                        backgroundSize: '200% 200%',
+                        backgroundPosition: 'center',
+                        backgroundBlendMode: 'luminosity',
+                      } : {}),
+                    }} />
+                  {!isCustom && (
+                    <input type="color" value={color}
+                      ref={el => patchInputRefs.current[idx] = el}
+                      onChange={e => savePatchColor(idx, e.target.value)}
+                      className="absolute inset-0 opacity-0 pointer-events-none w-7 h-7" />
+                  )}
                 </div>
               );
             })}
-            {/* Panneau HSL */}
-            <div className="flex flex-col gap-1 mt-1 mb-0.5" style={{ width: 80 }}>
-              {[
-                { label: 'T', key: 'h', min: -180, max: 180, color: '#e879f9' },
-                { label: 'S', key: 's', min: -100, max: 100, color: '#f97316' },
-                { label: 'L', key: 'l', min: -100, max: 100, color: '#facc15' },
-              ].map(({ label, key, min, max, color }) => (
-                <div key={key} className="flex items-center gap-1">
-                  <span className="text-[9px] font-bold w-3 text-gray-500">{label}</span>
-                  <input
-                    type="range" min={min} max={max} step="1"
-                    value={hslAdjust[key]}
-                    onChange={e => setHslAdjust(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
-                    title={`${label} : ${hslAdjust[key] > 0 ? '+' : ''}${hslAdjust[key]}`}
-                    style={{ width: 52, accentColor: color, cursor: 'pointer' }}
-                  />
-                  <span className="text-[8px] text-gray-400 w-5 text-right">{hslAdjust[key] > 0 ? '+' : ''}{hslAdjust[key]}</span>
-                </div>
-              ))}
-              <button
-                onClick={() => setHslAdjust({ h: 0, s: 0, l: 0 })}
-                title="Réinitialiser"
-                className="text-[9px] text-gray-400 hover:text-gray-700 text-center leading-none mt-0.5"
-              >⟳ reset</button>
-            </div>
             {/* Texture coton bio */}
             <button onClick={() => setBgTexture(!bgTexture)}
               title={bgTexture ? 'Retirer texture coton' : 'Texture coton bio'}
@@ -422,68 +479,85 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
           {/* Panneau gauche : original + overlay */}
           <div
             ref={leftPanelRef}
-            className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-crosshair flex items-center justify-center"
+            className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
             style={{
               backgroundColor: bgColor,
-              backgroundImage: bgTexture ? 'url(/texture-coton.png)' : undefined,
-              backgroundSize: bgTexture ? '300px 300px' : undefined,
+              backgroundImage: bgTexture ? 'url(/image4.png)' : undefined,
+              backgroundSize: bgTexture ? '200% 200%' : undefined,
+              backgroundPosition: bgTexture ? 'center' : undefined,
+              backgroundBlendMode: bgTexture ? texBlend : undefined,
             }}
+            onMouseDown={(e) => handleMouseDown('left', e)}
+            onMouseUp={handleMouseUp}
             onMouseMove={(e) => handleMouseMove('left', e)}
-            onMouseLeave={handleMouseLeave}
+            onMouseLeave={() => { handleMouseLeave(); handleMouseUp(); }}
           >
-            <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
-              <img
-                src={file.correctedSrc || `/uploads/${file.id}/converted.png`}
-                alt="Original"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  imageRendering: 'crisp-edges',
-                  position: 'absolute',
-                  inset: 0,
-                  zIndex: 1,
-                }}
-              />
-              {file.overlaySrc && (
+            <div style={{
+              width: `max(100%, ${(file.widthPx || 1000) * SCALE_REAL * zoomLevel + 80}px)`,
+              height: `max(100%, ${(file.heightPx || 1000) * SCALE_REAL * zoomLevel + 80}px)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
                 <img
-                  src={file.overlaySrc}
-                  alt="Overlay finesses"
+                  src={file.correctedSrc || `/uploads/${file.id}/converted.png`}
+                  alt="Original"
                   style={{
-                    width: '100%',
-                    height: '100%',
+                    width: '100%', height: '100%',
                     imageRendering: 'crisp-edges',
-                    position: 'absolute',
-                    inset: 0,
-                    zIndex: 2,
+                    position: 'absolute', inset: 0, zIndex: 1,
                   }}
                 />
-              )}
+                {file.overlaySrc && showOverlay && (
+                  <img
+                    src={file.overlaySrc}
+                    alt="Overlay finesses"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      imageRendering: 'crisp-edges', mixBlendMode: 'screen',
+                      position: 'absolute',
+                      inset: 0,
+                      zIndex: 2,
+                    }}
+                  />
+                )}
+              </div>
             </div>
           </div>
 
           {/* Panneau droit : overlay seul */}
           <div
             ref={rightPanelRef}
-            className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-crosshair flex items-center justify-center"
-            style={{ backgroundColor: '#6b7280' }}
+            className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
+            style={{
+              backgroundColor: bgColor,
+              backgroundImage: bgTexture ? 'url(/image4.png)' : undefined,
+              backgroundSize: bgTexture ? '200% 200%' : undefined,
+              backgroundPosition: bgTexture ? 'center' : undefined,
+              backgroundBlendMode: bgTexture ? texBlend : undefined,
+            }}
+            onMouseDown={(e) => handleMouseDown('right', e)}
+            onMouseUp={handleMouseUp}
             onMouseMove={(e) => handleMouseMove('right', e)}
-            onMouseLeave={handleMouseLeave}
+            onMouseLeave={() => { handleMouseLeave(); handleMouseUp(); }}
           >
-            {file.overlaySrc ? (
-              <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
-                <img
-                  src={file.overlaySrc}
-                  alt="Défauts"
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    imageRendering: 'crisp-edges',
-                  }}
-                />
-              </div>
-            ) : (
-              <span className="text-white text-sm font-bold absolute inset-0 flex items-center justify-center">Aucun défaut détecté</span>
-            )}
+            <div style={{
+              width: `max(100%, ${(file.widthPx || 1000) * SCALE_REAL * zoomLevel + 80}px)`,
+              height: `max(100%, ${(file.heightPx || 1000) * SCALE_REAL * zoomLevel + 80}px)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {file.overlaySrc && showOverlay ? (
+                <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
+                  <img
+                    src={file.overlaySrc}
+                    alt="Défauts"
+                    style={{ width: '100%', height: '100%', imageRendering: 'crisp-edges', mixBlendMode: 'multiply' }}
+                  />
+                </div>
+              ) : (
+                <span className="text-white text-sm font-bold text-center leading-relaxed">{file.overlaySrc ? 'Overlay masqué' : 'Les finesses ont été épaissies'}</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -539,6 +613,80 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
           </span>
         </div>
       </div>
+
+      {/* Modale color picker — style Photoshop */}
+      {hslEditor && (() => {
+        const currentHex = hsvToHex(hslEditor.h, hslEditor.s, hslEditor.v);
+        return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center"
+          onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-2xl p-4 w-72"
+            onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded border border-gray-300 shadow-sm flex-shrink-0"
+                  style={{ backgroundColor: currentHex }} />
+                <div>
+                  <span className="text-sm font-bold text-gray-700">Patch {hslEditor.idx + 1}</span>
+                  <div className="flex gap-2 text-[10px] font-mono text-gray-500">
+                    <span>R{parseInt(currentHex.slice(1,3),16)}</span>
+                    <span>G{parseInt(currentHex.slice(3,5),16)}</span>
+                    <span>B{parseInt(currentHex.slice(5,7),16)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={confirmHslEditor}
+                  className="px-3 py-1 rounded text-xs font-bold text-white bg-green-500 hover:bg-green-600">✓ OK</button>
+                <button onClick={cancelHslEditor}
+                  className="px-3 py-1 rounded text-xs font-bold text-white bg-red-400 hover:bg-red-500">✕</button>
+              </div>
+            </div>
+            {/* Rectangle 2D : X=saturation, Y=luminosité (value) */}
+            <div
+              ref={areaRef}
+              className="relative w-full rounded cursor-crosshair select-none"
+              style={{
+                height: 180,
+                backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
+                backgroundImage: 'linear-gradient(to right, #fff, transparent), linear-gradient(to top, #000, transparent)',
+              }}
+              onPointerDown={e => { areaDragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleAreaPointer(e); }}
+              onPointerMove={e => { if (areaDragging.current) handleAreaPointer(e); }}
+              onPointerUp={() => { areaDragging.current = false; }}
+            >
+              {/* Curseur rond */}
+              <div className="absolute w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
+                style={{
+                  left: `calc(${hslEditor.s}% - 8px)`,
+                  top: `calc(${100 - hslEditor.v}% - 8px)`,
+                  backgroundColor: currentHex,
+                  boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.3)',
+                }} />
+            </div>
+            {/* Slider teinte horizontal */}
+            <div className="relative h-4 rounded-full mt-3"
+              style={{ background: 'linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))' }}>
+              <input type="range" min="0" max="360" step="1"
+                value={hslEditor.h}
+                onChange={e => {
+                  const updated = { ...hslEditor, h: parseInt(e.target.value) };
+                  setHslEditor(updated);
+                  setBgColor(hsvToHex(updated.h, updated.s, updated.v));
+                }}
+                className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
+              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
+                style={{
+                  left: `calc(${(hslEditor.h/360)*100}% - 8px)`,
+                  backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
+                  boxShadow: '0 0 0 1px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.3)',
+                }} />
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Dialogue de confirmation à la fermeture */}
       {showConfirm && (

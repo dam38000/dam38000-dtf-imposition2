@@ -27,19 +27,13 @@ export default function FileList({ files, onRemove, onRemoveAll, onUpdateQuantit
             <div className="flex justify-between items-start gap-1">
               <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span className="text-xs font-bold text-gray-900 truncate" title={file.name}>{file.name}</span>
-                {file.hasIssues && (
-                  <button
-                    onClick={() => onInspect(file.id)}
-                    className="px-1.5 py-0.5 bg-red-500 text-white text-[9px] font-bold rounded animate-pulse flex items-center gap-1 hover:bg-red-600 transition-colors"
-                  >
-                    <Icons.AlertTriangle size={10} /> Finesses
-                  </button>
-                )}
-                {file.hasIssues === false && file.overlaySrc && (
-                  <span className="px-1.5 py-0.5 bg-green-500 text-white text-[9px] font-bold rounded flex items-center gap-1">
-                    <Icons.CheckCircle size={10} /> OK
-                  </span>
-                )}
+                <button
+                  onClick={() => onInspect(file.id)}
+                  className={`px-1.5 py-0.5 text-white text-[9px] font-bold rounded flex items-center gap-1 transition-colors ${file.hasIssues === true && !file.correctedSrc ? 'bg-red-500 animate-pulse hover:bg-red-600' : file.hasIssues === false || file.correctedSrc ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-400 hover:bg-gray-500'}`}
+                >
+                  {file.hasIssues === true && !file.correctedSrc ? <Icons.AlertTriangle size={10} /> : file.hasIssues === false || file.correctedSrc ? <Icons.CheckCircle size={10} /> : <Icons.Search size={10} />}
+                  Visualisation / Finesse
+                </button>
               </div>
               <button onClick={() => onRemove(file.id)} className="text-red-400 hover:text-red-600 flex-shrink-0 ml-1">
                 <Icons.X size={18}/>
