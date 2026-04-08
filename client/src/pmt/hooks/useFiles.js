@@ -143,6 +143,8 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
     if (!autoCrop) return;
     const uncropped = files.filter(f => !f.cropped && !croppingRef.current.has(f.id));
     if (uncropped.length === 0) return;
+    // Marquer immédiatement comme en cours pour éviter les doublons
+    uncropped.forEach(f => croppingRef.current.add(f.id));
     uncropped.forEach(f => cropFile(f.id));
   }, [files, autoCrop, cropFile]);
 

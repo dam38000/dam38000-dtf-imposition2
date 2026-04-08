@@ -18,7 +18,7 @@ import FinesseModal from './components/FinesseModal';
 // Fonctions client conservées mais plus utilisées (version serveur ci-dessous)
 // import { generateExpansionOverlay, applyFinesseATN, generateExpandedImage } from './lib/finesseDetection';
 
-export default function AppDTF() {
+export default function AppTest() {
   // ── Etat general — DTF uniquement ──
   const productMode = 'DTF'; // fixé
   const [selectedFormat, setSelectedFormat] = useState('A2');
@@ -96,7 +96,6 @@ export default function AppDTF() {
 
     const allCropped = filesHook.files.length > 0 && filesHook.files.every(f => f.cropped);
     const unanalyzed = filesHook.files.filter(f => f.cropped && !analyzedRef.current.has(f.id) && f.hasIssues === undefined);
-    console.log(`[finesse-auto] useEffect: ${filesHook.files.length} fichiers, allCropped=${allCropped}, unanalyzed=${unanalyzed.length}, analyzed=${analyzedRef.current.size}`);
     if (!allCropped || unanalyzed.length === 0) {
       // Plus rien à analyser — fermer l'overlay s'il était en attente
       if (allCropped && unanalyzed.length === 0 && filesHook.uploadStatus) {

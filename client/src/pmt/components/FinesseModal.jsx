@@ -41,14 +41,8 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   const correctionIntensity = 1.3; // intensité fixe
   const [showConfirm, setShowConfirm] = useState(false);
   const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
-  const [bgMode, setBgMode] = useState('texture'); // 'texture' | 'custom' | 'plain'
-  const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('finesse_custom_bg') || null);
-  const [customBgScale, setCustomBgScale] = useState(() => parseFloat(localStorage.getItem('finesse_custom_bg_scale')) || 1);
-  const customBgInputRef = useRef(null);
+  const [bgTexture, setBgTexture] = useState(true); // texture tissu
   const texBlend = 'luminosity';
-  // Compat avec ancien code
-  const bgTexture = bgMode === 'texture';
-  const customBgImage = bgMode === 'custom' ? customBgData : null;
   const [showOverlay, setShowOverlay] = useState(true); // afficher overlay finesses
   // Couleurs personnalisables (sauvegardées en localStorage)
 
@@ -466,9 +460,9 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               );
             })}
             {/* Texture coton bio */}
-            <button onClick={() => setBgMode(bgMode === 'texture' ? 'plain' : 'texture')}
+            <button onClick={() => setBgTexture(!bgTexture)}
               title={bgTexture ? 'Retirer texture coton' : 'Texture coton bio'}
-              className={`w-7 h-7 rounded border-2 text-[7px] font-bold leading-tight transition-all ${bgMode === 'texture' ? 'border-green-600 ring-2 ring-green-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
+              className={`w-7 h-7 rounded border-2 text-[7px] font-bold leading-tight transition-all ${bgTexture ? 'border-green-600 ring-2 ring-green-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
               style={{
                 backgroundColor: '#f5f0e8',
                 backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h12v1H0zm0 3h12v1H0zm0 3h12v1H0zm0 3h12v1H0z' fill='rgba(139,119,90,0.2)'/%3E%3Cpath d='M0 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0zm3 0v12h1V0z' fill='rgba(139,119,90,0.15)'/%3E%3C/svg%3E")`,
@@ -476,56 +470,10 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               <span style={{ color: '#6b8a3e' }}>&#127793;</span>
             </button>
             {/* Fond par défaut (gris moyen) */}
-            <button onClick={() => { setBgColor('#9ca3af'); setBgMode('plain'); }}
+            <button onClick={() => { setBgColor('#9ca3af'); setBgTexture(false); }}
               title="Fond par défaut"
-              className={`w-7 h-7 rounded border-2 transition-all ${bgMode === 'plain' && bgColor === '#9ca3af' ? 'border-white ring-2 ring-blue-500 scale-110' : 'border-gray-400 hover:scale-105'}`}
+              className={`w-7 h-7 rounded border-2 transition-all ${bgColor === '#9ca3af' && !bgTexture ? 'border-white ring-2 ring-blue-500 scale-110' : 'border-gray-400 hover:scale-105'}`}
               style={{ backgroundColor: '#9ca3af' }} />
-            {/* Importer image tissu client + slider */}
-            <div className="flex flex-col items-center gap-1">
-              <button onClick={() => { customBgData ? setBgMode('custom') : customBgInputRef.current?.click(); }}
-                onDoubleClick={() => customBgInputRef.current?.click()}
-                title={customBgData ? 'Clic: appliquer — double-clic: changer' : 'Importer un tissu client (PNG, JPG)'}
-                className={`w-7 h-7 rounded border-2 transition-all flex items-center justify-center text-[9px] font-bold ${bgMode === 'custom' ? 'border-blue-500 ring-2 ring-blue-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
-                style={{
-                  backgroundColor: '#e5e7eb',
-                  backgroundImage: customBgData ? `url(${customBgData})` : undefined,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                }}>
-                {!customBgData && <span style={{ fontSize: '14px' }}>&#128247;</span>}
-              </button>
-              {customBgData && (
-                <>
-                  <input type="range" min="0.5" max="2" step="0.1" value={customBgScale}
-                    onChange={e => { const v = parseFloat(e.target.value); setCustomBgScale(v); localStorage.setItem('finesse_custom_bg_scale', String(v)); }}
-                    title={`Taille : x${customBgScale}`}
-                    className="accent-blue-500"
-                    style={{ width: 50, height: 8 }} />
-                  <span className="text-[7px] text-gray-400">x{customBgScale}</span>
-                </>
-              )}
-            </div>
-            <input
-              ref={customBgInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/jpg"
-              className="hidden"
-              onChange={e => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                  const dataUrl = reader.result;
-                  setCustomBgData(dataUrl);
-                  setCustomBgScale(1);
-                  setBgMode('custom');
-                  localStorage.setItem('finesse_custom_bg', dataUrl);
-                  localStorage.setItem('finesse_custom_bg_scale', '1');
-                };
-                reader.readAsDataURL(file);
-                e.target.value = '';
-              }}
-            />
           </div>
 
           {/* Panneau gauche : original + overlay */}
@@ -534,11 +482,10 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
             style={{
               backgroundColor: bgColor,
-              backgroundImage: customBgImage ? `url(${customBgImage})` : (bgTexture ? 'url(/image4.png)' : undefined),
-              backgroundSize: customBgImage ? `${customBgScale * 100}%` : (bgTexture ? '200% 200%' : undefined),
-              backgroundPosition: 'center',
-              backgroundRepeat: customBgImage ? 'repeat' : undefined,
-              backgroundBlendMode: (customBgImage || bgTexture) ? texBlend : undefined,
+              backgroundImage: bgTexture ? 'url(/image4.png)' : undefined,
+              backgroundSize: bgTexture ? '200% 200%' : undefined,
+              backgroundPosition: bgTexture ? 'center' : undefined,
+              backgroundBlendMode: bgTexture ? texBlend : undefined,
             }}
             onMouseDown={(e) => handleMouseDown('left', e)}
             onMouseUp={handleMouseUp}
@@ -584,11 +531,10 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
             style={{
               backgroundColor: bgColor,
-              backgroundImage: customBgImage ? `url(${customBgImage})` : (bgTexture ? 'url(/image4.png)' : undefined),
-              backgroundSize: customBgImage ? `${customBgScale * 100}%` : (bgTexture ? '200% 200%' : undefined),
-              backgroundPosition: 'center',
-              backgroundRepeat: customBgImage ? 'repeat' : undefined,
-              backgroundBlendMode: (customBgImage || bgTexture) ? texBlend : undefined,
+              backgroundImage: bgTexture ? 'url(/image4.png)' : undefined,
+              backgroundSize: bgTexture ? '200% 200%' : undefined,
+              backgroundPosition: bgTexture ? 'center' : undefined,
+              backgroundBlendMode: bgTexture ? texBlend : undefined,
             }}
             onMouseDown={(e) => handleMouseDown('right', e)}
             onMouseUp={handleMouseUp}
