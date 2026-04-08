@@ -110,7 +110,10 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     const finFullPath = tmp('fin_full');
     im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
 
-    im(`magick "${finFullPath}" \\( +clone -fill "rgb(0,255,0)" -colorize 100 \\) +swap -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
+    // Créer le fond vert puis composer avec l'alpha des finesses (évite les parenthèses shell)
+    const greenPath = tmp('green');
+    im(`magick "${finFullPath}" -fill "rgb(0,255,0)" -colorize 100 "${greenPath}"`);
+    im(`magick "${greenPath}" "${finFullPath}" -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
 
     // f) Panneau DROIT : même overlay
     fs.copyFileSync(overlayPath, pureDefectsPath);
@@ -127,7 +130,7 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     }
 
     // Nettoyage des fichiers temporaires
-    for (const f of [alphaPath, halfPath, openedPath, finPath, finFullPath]) {
+    for (const f of [alphaPath, halfPath, openedPath, finPath, finFullPath, greenPath]) {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     }
 
