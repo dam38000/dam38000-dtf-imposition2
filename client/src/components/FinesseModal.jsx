@@ -329,9 +329,11 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
 
   const handleSave = async () => {
     if (!onSave || !file.correctedSrc) return;
+    console.log('[FinesseModal] handleSave déclenché, lancement timer');
     setIsSaving(true);
     startTimer('Enregistrement en cours');
     await onSave(file.id);
+    console.log('[FinesseModal] handleSave terminé');
     stopTimer();
     setIsSaving(false);
   };
@@ -348,7 +350,9 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   const handleConfirmSave = async () => {
     setShowConfirm(false);
     setIsSaving(true);
+    startTimer('Enregistrement en cours');
     await onSave(file.id);
+    stopTimer();
     setIsSaving(false);
     onClose(false); // déjà sauvegardé
   };
@@ -370,7 +374,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
       onClick={handleRequestClose}
     >
       <div
-        className="bg-white rounded-lg p-3 flex flex-col w-full h-full max-w-[95vw] max-h-[95vh]"
+        className={`bg-white rounded-lg p-3 flex flex-col w-full h-full max-w-[95vw] max-h-[95vh] transition-all duration-300 ${isSaving ? 'blur-[2px]' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -484,7 +488,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             <div className="flex flex-col items-center gap-1">
               <button onClick={() => { customBgData ? setBgMode('custom') : customBgInputRef.current?.click(); }}
                 onDoubleClick={() => customBgInputRef.current?.click()}
-                title={customBgData ? 'Clic: appliquer — double-clic: changer' : 'Importer un tissu client (PNG, JPG)'}
+                title="Charger le scan de votre tissu"
                 className={`w-7 h-7 rounded border-2 transition-all flex items-center justify-center text-[9px] font-bold ${bgMode === 'custom' ? 'border-blue-500 ring-2 ring-blue-400 scale-110' : 'border-gray-400 hover:scale-105'}`}
                 style={{
                   backgroundColor: '#e5e7eb',
@@ -494,6 +498,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
                 }}>
                 {!customBgData && <span style={{ fontSize: '14px' }}>&#128247;</span>}
               </button>
+              <span className="text-[14px] text-gray-500 leading-tight text-center">votre<br/>tissu</span>
               {customBgData && (
                 <>
                   <input type="range" min="0.5" max="2" step="0.1" value={customBgScale}
@@ -617,7 +622,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
 
         {/* Overlay minuteur pendant correction/épaississement/sauvegarde */}
         {workingMessage && (
-          <div className="absolute inset-0 z-50 bg-black/70 flex flex-col items-center justify-center rounded-lg">
+          <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col items-center justify-center">
             <div className="animate-spin-slow text-white mb-4">
               <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/>

@@ -179,6 +179,7 @@ export default function AppDTF() {
 
     // Si pas encore analysé, lancer l'analyse serveur
     if (f.hasIssues === undefined) {
+      filesHook.setUploadStatus({ step: 'Analyse des finesses...', fileName: f.name, current: 1, total: 1 });
       console.log(`[finesse] Analyse serveur pour ${f.name}, seuil=${finesse}mm`);
       try {
         const result = await analyzeFileServer(fileId);
@@ -194,6 +195,7 @@ export default function AppDTF() {
       } catch (err) {
         console.error('[finesse] Erreur analyse:', err);
       }
+      filesHook.setUploadStatus(null);
     }
 
     setFinesseFileId(fileId);
