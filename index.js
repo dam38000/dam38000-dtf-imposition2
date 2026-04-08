@@ -23,13 +23,11 @@ app.use('/api/analyze', analyzeRoute);
 const saveImageRoute = require('./routes/save-image');
 app.use('/api/save-image', saveImageRoute);
 
-// En production, servir le build React
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'client', 'dist')));
-  app.get('/{*splat}', (req, res) => {
-    res.sendFile(path.join(__dirname, 'client', 'dist', 'index.html'));
-  });
-}
+// Servir le build React (client/dist)
+app.use(express.static(path.join(__dirname, 'client', 'dist')));
+app.get('/{*splat}', (req, res) => {
+  res.sendFile(path.join(__dirname, 'client', 'dist', 'index.html'));
+});
 
 // Démarrage du serveur
 app.listen(PORT, () => {
