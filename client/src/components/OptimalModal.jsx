@@ -82,6 +82,15 @@ export function OptimalModal({
             <div className="text-xs text-gray-500 italic">le classement est fait en fonction du tarif catalogue 2026</div>
           </div>
 
+          <div className="mb-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-2 text-xs text-orange-800">
+            <span className="font-bold">Attention :</span> les montages DTF au format A6 a A3 obligent un nombre d&apos;exemplaires respectant les valeurs suivantes :
+            <br/>
+            <span className="font-bold">A3 :</span> 2, 4, 6 ex.. &nbsp;
+            <span className="font-bold">A4 :</span> 4, 8, 16 ex.. &nbsp;
+            <span className="font-bold">A5 :</span> 8, 16, 32 ex.. &nbsp;
+            <span className="font-bold">A6 :</span> 16, 32, 64 ex..
+          </div>
+
           {/* Tableau 3 colonnes */}
           <div className="flex gap-2">
             {activeModes.map(mode => (
@@ -116,9 +125,8 @@ export function OptimalModal({
           {/* Boutons bas */}
           <div className="flex gap-2 mt-3">
             <button onClick={() => { setShowOptimalModal(false); optimalStopRef.current = true; terminatePixelWorker(); }}
-              disabled={isOptimalRunning}
-              className={`flex-1 py-1.5 rounded text-xs font-bold transition-colors ${isOptimalRunning ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}>
-              Fermer
+              className="flex-1 py-1.5 rounded text-xs font-bold transition-colors bg-blue-500 hover:bg-blue-600 text-white">
+              Continuer
             </button>
             {isOptimalRunning ? (
               <button onClick={() => { optimalStopRef.current = true; terminatePixelWorker(); }}

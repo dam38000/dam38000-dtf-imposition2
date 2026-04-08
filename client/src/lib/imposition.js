@@ -24,7 +24,112 @@ export function terminatePixelWorker() {
   if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
 }
 
-export async function launchImposition({ files, sheetSize, margin, impositionMode, activeTab, stopRef, onAskMoreVariants, onFirstResult, onProgress }) {
+// ── Recherche manuelle de variantes (max 4) ──
+export async function searchVariants({ files, sheetSize, margin, impositionMode, activeTab, currentItems, runs, stopRef, onProgress }) {
+  const safeMargin = (impositionMode === 'imbrication') ? Math.max(4, parseInput(margin)) : parseInput(margin);
+  const pageW = parseInput(sheetSize.w) || 100;
+  const pageH = parseInput(sheetSize.h) || 100;
+  let allowRotation = activeTab !== 'norotate';
+  const MAX_VARIANTS = 4;
+
+  const fileData = {};
+  files.forEach(f => {
+    const w = parseInput(f.width_mm);
+    const h = parseInput(f.height_mm);
+    const q = Math.abs(parseInt(f.quantity)) || 0;
+    if (w > 0 && h > 0 && q > 0) {
+      fileData[f.id] = { ...f, wCalc: w + safeMargin * 2, hCalc: h + safeMargin * 2, req: q, realW: w, realH: h, src: f.thumbnailUrl };
+    }
+  });
+
+  const allVariants = [{ items: currentItems, label: 'Variante 1' }];
+
+  if (impositionMode === 'imbrication') {
+    const IMB_SCALE = 1;
+    const packerMarginPx = Math.ceil((safeMargin / 2) * IMB_SCALE);
+    const packerPageW = Math.ceil(pageW * IMB_SCALE) + packerMarginPx * 2;
+    const packerPageH = Math.ceil(pageH * IMB_SCALE) + packerMarginPx * 2;
+    const masksCache = {};
+    for (let fId in fileData) {
+      masksCache[fId] = await createBitmapMask(fileData[fId].src, fileData[fId].realW, fileData[fId].realH, safeMargin / 2, IMB_SCALE);
+    }
+    const rotateMaskFn = (mask) => {
+      const g = new Uint8Array(mask.h * mask.w);
+      for (let y = 0; y < mask.h; y++)
+        for (let x = 0; x < mask.w; x++)
+          if (mask.grid[y * mask.w + x] === 1) { const nx = mask.h - 1 - y, ny = x; g[ny * mask.h + nx] = 1; }
+      return { w: mask.h, h: mask.w, margin: mask.margin, grid: g };
+    };
+    const sheetItems = [];
+    for (const f of files) {
+      const file = fileData[f.id];
+      if (!file) continue;
+      const perSheet = Math.max(1, Math.ceil(file.req / runs));
+      for (let i = 0; i < perSheet; i++) {
+        sheetItems.push({ fileId: file.id, src: file.src, mask: masksCache[file.id], w: file.realW, h: file.realH, realW: file.realW, realH: file.realH });
+      }
+    }
+    const sortModes = ['area', 'width', 'none'];
+    const orients = allowRotation ? [[false, false], [false, true], [true, false], [true, true]] : [[false, false]];
+    for (const sm of sortModes) {
+      for (const [preRot, rot] of orients) {
+        if (stopRef?.current || allVariants.length >= MAX_VARIANTS) break;
+        if (onProgress) onProgress(`Recherche variante ${allVariants.length + 1}...`);
+        const variant = preRot
+          ? sheetItems.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, mask: rotateMaskFn(it.mask), _prerotated: true }))
+          : sheetItems.map(it => ({ ...it }));
+        let res;
+        try { res = await runPixelWorkerPack({ packerPageW, packerPageH, items: variant, allowRotation: rot, sortMode: sm }); } catch { continue; }
+        const fixedRes = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
+        if (fixedRes.length === sheetItems.length) {
+          const rescaled = fixedRes.map(pi => ({ ...pi, x: pi.x / IMB_SCALE - safeMargin / 2, y: pi.y / IMB_SCALE - safeMargin / 2 }));
+          const isDupe = allVariants.some(v => v.items.length === rescaled.length && v.items.every((it, i) => Math.abs(it.x - rescaled[i].x) < 0.5 && Math.abs(it.y - rescaled[i].y) < 0.5));
+          if (!isDupe) allVariants.push({ items: rescaled, label: `Variante ${allVariants.length + 1}` });
+        }
+      }
+      if (allVariants.length >= MAX_VARIANTS) break;
+    }
+  } else {
+    const isMassiMode = (impositionMode === 'massicot' || impositionMode === 'imbrique');
+    const packW = isMassiMode ? pageW + safeMargin * 2 : pageW;
+    const packH = isMassiMode ? pageH + safeMargin * 2 : pageH;
+    const sheetItems = [];
+    files.forEach(f => {
+      const file = fileData[f.id];
+      if (!file) return;
+      const perSheet = Math.max(1, Math.ceil(file.req / runs));
+      for (let i = 0; i < perSheet; i++) {
+        sheetItems.push({ fileId: file.id, src: file.src, w: file.wCalc, h: file.hCalc, realW: file.realW, realH: file.realH });
+      }
+    });
+    const sortModes = ['area', 'width', 'none'];
+    const orients = allowRotation ? [[false, false], [false, true], [true, false], [true, true]] : [[false, false]];
+    const splitModes = impositionMode === 'massicot' ? ['auto', 'horizontal', 'vertical'] : ['bssf', 'blsf', 'baf'];
+    for (const sm of sortModes) {
+      for (const splitM of splitModes) {
+        for (const [preRot, rot] of orients) {
+          if (stopRef?.current || allVariants.length >= MAX_VARIANTS) break;
+          if (!allowRotation && (preRot || rot)) continue;
+          if (onProgress) onProgress(`Recherche variante ${allVariants.length + 1}...`);
+          const variant = preRot ? sheetItems.map(it => ({ ...it, w: it.h, h: it.w, realW: it.realH, realH: it.realW, _prerotated: true })) : sheetItems.map(it => ({ ...it }));
+          let p = impositionMode === 'massicot' ? new GuillotinePacker(packW, packH, splitM) : new MaxRectsPacker(packW, packH, splitM);
+          let res = p.fit(variant, rot, sm);
+          res = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
+          if (isMassiMode) res = res.map(it => ({ ...it, x: it.x - safeMargin, y: it.y - safeMargin }));
+          if (res.length === sheetItems.length) {
+            const isDupe = allVariants.some(v => v.items.length === res.length && v.items.every((vi, idx) => Math.abs(vi.x - res[idx].x) < 0.01 && Math.abs(vi.y - res[idx].y) < 0.01));
+            if (!isDupe) allVariants.push({ items: res, label: `Variante ${allVariants.length + 1}` });
+          }
+        }
+        if (allVariants.length >= MAX_VARIANTS) break;
+      }
+      if (allVariants.length >= MAX_VARIANTS) break;
+    }
+  }
+  return allVariants;
+}
+
+export async function launchImposition({ files, sheetSize, margin, impositionMode, activeTab, stopRef, onAskMoreVariants, onFirstResult, onProgress, fastMode = false }) {
   if (files.length === 0) return { sheets: [], stats: { totalSheets: 0, details: [] }, errors: [] };
 
   const currentMode = impositionMode;
@@ -38,7 +143,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
   }
 
   const startTime = Date.now();
-  const TIMEOUT_LIMIT = 120000; // 2 minutes max
+  const TIMEOUT_LIMIT = 600000; // 10 minutes max (le timeout UI gère la popup à 60s)
   const safeMargin = (currentMode === 'imbrication') ? Math.max(4, parseInput(margin)) : parseInput(margin);
   const pageW = parseInput(sheetSize.w) || 100;
   const pageH = parseInput(sheetSize.h) || 100;
@@ -151,7 +256,7 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
           estItems.push({ w: file.wCalc, h: file.hCalc });
         }
       }
-      const packer = new MaxRectsPacker(pageW, pageH);
+      const packer = new MaxRectsPacker(pageW + safeMargin * 2, pageH + safeMargin * 2);
       const packed = packer.fit(estItems, allowRotation, 'area');
       if (packed.length === estItems.length) {
         maxRunRect = estRun;
@@ -221,8 +326,8 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
       const runT0 = performance.now();
       let bestPackedImb = [];
       const isOptimiseImb = sortMode === 'optimise';
-      const imbSortModes = isOptimiseImb ? ['area', 'width', 'none'] : [sortMode];
-      const imbOrients = allowRotation ? [[false, false], [false, true], [true, false], [true, true]] : [[false, false]];
+      const imbSortModes = isOptimiseImb ? ['area'] : [sortMode];
+      const imbOrients = allowRotation ? [[false, true]] : [[false, false]];
       let variantsTested = 0;
 
       outerImb: for (const sm of imbSortModes) {
@@ -271,8 +376,8 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
         if (onProgress) onProgress(`Run ${currentRuns} — ${bestPackedImb.length}/${currentSheetItems.length} pieces ✗`);
         console.log(`[imbrication] run ${currentRuns} ECHEC partiel (${bestPackedImb.length}/${currentSheetItems.length}) — variantes rapides epuisees`);
 
-        if (solved) {
-          // Test exhaustif automatique (toutes les variantes)
+        if (false) {
+          // Test exhaustif désactivé — 1 variante suffit
           if (onProgress) onProgress(`Run ${currentRuns} — test exhaustif...`);
           console.log(`[imbrication] test exhaustif pour run ${currentRuns}...`);
           const exhaustSortModes = ['area', 'width', 'none'];
@@ -344,8 +449,8 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
       });
     }
 
-    // Recherche automatique de variantes
-    if (onAskMoreVariants) {
+    // Recherche automatique de variantes — désactivée (1 seule variante suffit)
+    if (false && onAskMoreVariants) {
       const finalSheetItems = [];
       for (const f of files) {
         const file = fileData[f.id];
@@ -533,8 +638,8 @@ export async function launchImposition({ files, sheetSize, margin, impositionMod
     });
   }
 
-  // Recherche de variantes (autres placements avec le même nombre de planches)
-  if (onAskMoreVariants) {
+  // Recherche de variantes — désactivée
+  if (false && onAskMoreVariants) {
     const optRuns = bestResult.runs;
     let currentSheetItems = [];
     files.forEach(f => {

@@ -4,6 +4,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PRODUCT_FORMATS } from './lib/constants';
+import { roundToMultiple } from './lib/pricing';
 import { useFiles } from './hooks/useFiles';
 import { useImposition } from './hooks/useImposition';
 import { useExport } from './hooks/useExport';
@@ -66,7 +67,8 @@ export default function AppDTF() {
 
   const { previewRef, previewScale } = usePreview(sheetSize);
 
-  const totalExemplaires = impositionHook.stats ? impositionHook.stats.totalSheets : 0;
+  const rawSheets = impositionHook.stats ? impositionHook.stats.totalSheets : 0;
+  const totalExemplaires = rawSheets > 0 ? roundToMultiple(rawSheets, selectedFormat) : 0;
   const currentSheet = impositionHook.sheets[impositionHook.currentSheetIndex] || null;
 
   // ── Finesse : fichier sélectionné pour la modal ──
@@ -366,14 +368,10 @@ export default function AppDTF() {
         allowRotation={allowRotation} setAllowRotation={setAllowRotation}
         setAllowMove={setAllowMove}
         resetPlanche={resetPlanche}
+        handleSearchVariants={impositionHook.handleSearchVariants}
+        isSearchingVariants={impositionHook.isSearchingVariants}
       />
 
-      <VariantsChooser
-        variantsChooser={impositionHook.variantsChooser}
-        setVariantsChooser={impositionHook.setVariantsChooser}
-        setSheets={impositionHook.setSheets}
-        calcStopRef={impositionHook.calcStopRef}
-      />
 
       <OptimalModal
         showOptimalModal={impositionHook.showOptimalModal}
@@ -399,6 +397,97 @@ export default function AppDTF() {
       />
 
       <ErrorAlert errorAlert={errorAlert} setErrorAlert={setErrorAlert} />
+
+      {/* ── Popup durée de calcul longue ── */}
+      {impositionHook.showTimeoutAsk && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+            <h3 className="text-lg font-bold text-orange-600 mb-4">Durée du calcul longue</h3>
+            <p className="text-sm text-gray-600 mb-4">Voulez-vous continuer ?</p>
+            <div className="flex justify-center gap-3">
+              <button onClick={impositionHook.handleTimeoutContinue}
+                className="px-6 py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 transition-colors">
+                Oui
+              </button>
+              <button onClick={impositionHook.handleTimeoutStop}
+                className="px-6 py-2 bg-red-400 text-white font-bold rounded-lg hover:bg-red-500 transition-colors">
+                Non
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Popup Voulez-vous des variantes ? ── */}
+      {impositionHook.showVariantsAsk && !impositionHook.isSearchingVariants && !impositionHook.variantsChooser && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Voulez-vous chercher des variantes ?</h3>
+            <div className="flex justify-center gap-3">
+              <button onClick={() => { impositionHook.setShowVariantsAsk(false); impositionHook.handleSearchVariants(); }}
+                className="px-6 py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 transition-colors">
+                Oui
+              </button>
+              <button onClick={() => impositionHook.setShowVariantsAsk(false)}
+                className="px-6 py-2 bg-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-300 transition-colors">
+                Non
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Recherche de variantes en cours ── */}
+      {impositionHook.isSearchingVariants && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+            <div className="text-4xl mb-3 animate-spin-slow">&#9203;</div>
+            <div className="text-sm font-bold text-gray-700">{impositionHook.calcProgress || 'Recherche de variantes...'}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Chooser de variantes avec flèches ── */}
+      {impositionHook.variantsChooser && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+            <h3 className="text-lg font-bold text-green-600 mb-3">
+              {impositionHook.variantsChooser.variants.length} variante{impositionHook.variantsChooser.variants.length > 1 ? 's' : ''} trouvée{impositionHook.variantsChooser.variants.length > 1 ? 's' : ''}
+            </h3>
+            {impositionHook.variantsChooser.variants.length > 1 && (
+              <div className="flex items-center justify-center gap-4 mb-4">
+                <button
+                  onClick={() => {
+                    const newIdx = Math.max(0, impositionHook.variantsChooser.currentIdx - 1);
+                    impositionHook.setVariantsChooser({ ...impositionHook.variantsChooser, currentIdx: newIdx });
+                    impositionHook.setSheets([{ id: newIdx + 1, items: impositionHook.variantsChooser.variants[newIdx].items, copies: impositionHook.variantsChooser.runs, efficiency: 'N/A' }]);
+                  }}
+                  disabled={impositionHook.variantsChooser.currentIdx === 0}
+                  className={`px-3 py-2 rounded text-xl font-bold ${impositionHook.variantsChooser.currentIdx === 0 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50 cursor-pointer'}`}>
+                  &#9664;
+                </button>
+                <span className="text-sm font-bold text-gray-700">
+                  Variante {impositionHook.variantsChooser.currentIdx + 1} / {impositionHook.variantsChooser.variants.length}
+                </span>
+                <button
+                  onClick={() => {
+                    const newIdx = Math.min(impositionHook.variantsChooser.variants.length - 1, impositionHook.variantsChooser.currentIdx + 1);
+                    impositionHook.setVariantsChooser({ ...impositionHook.variantsChooser, currentIdx: newIdx });
+                    impositionHook.setSheets([{ id: newIdx + 1, items: impositionHook.variantsChooser.variants[newIdx].items, copies: impositionHook.variantsChooser.runs, efficiency: 'N/A' }]);
+                  }}
+                  disabled={impositionHook.variantsChooser.currentIdx === impositionHook.variantsChooser.variants.length - 1}
+                  className={`px-3 py-2 rounded text-xl font-bold ${impositionHook.variantsChooser.currentIdx === impositionHook.variantsChooser.variants.length - 1 ? 'text-gray-300' : 'text-blue-600 hover:bg-blue-50 cursor-pointer'}`}>
+                  &#9654;
+                </button>
+              </div>
+            )}
+            <button onClick={() => impositionHook.setVariantsChooser(null)}
+              className="px-6 py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Finesse ── */}
       {finesseFile && (

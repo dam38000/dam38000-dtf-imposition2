@@ -698,7 +698,14 @@ router.get('/trim/:id', async (req, res) => {
 
     // Lire le DPI avant le trim
     const metaBefore = await sharp(imgPath).metadata();
-    const dpi = metaBefore.density || 300;
+    let dpi = metaBefore.density || 300;
+    // Sharp peut retourner la densité en pixels/cm au lieu de pixels/pouce — corriger les valeurs aberrantes
+    // 300 DPI = 11811 pixels/m. Si density > 1000, c'est probablement en pixels/m → convertir en DPI
+    if (dpi > 1000) {
+      console.log(`[trim] Densité aberrante détectée (${dpi}), conversion pixels/m → DPI`);
+      dpi = Math.round(dpi / 39.3701); // pixels/m → pixels/pouce
+    }
+    console.log(`[trim] DPI utilisé: ${dpi} (raw density: ${metaBefore.density})`);
 
     // Rogner l'image avec ImageMagick -trim +repage
     execSync(`magick "${imgPath}" -trim +repage PNG32:"${imgPath}"`, { stdio: 'pipe' });

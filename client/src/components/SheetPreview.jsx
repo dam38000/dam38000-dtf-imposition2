@@ -16,6 +16,7 @@ export function SheetPreview({
   handleExportCut, handleExportComposite, handleExportPNG,
   allowRotation, setAllowRotation, setAllowMove,
   resetPlanche,
+  handleSearchVariants, isSearchingVariants,
 }) {
   return (
     <main className="flex-1 flex flex-col h-full overflow-hidden">
@@ -204,7 +205,7 @@ export function SheetPreview({
                 <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
                   {impositionErrors.length > 0 ? (
                     <div className="text-red-500 font-bold text-center px-4"
-                      style={{ fontSize: `${Math.max(14, 18 / previewScale)}px` }}>
+                      style={{ fontSize: `${Math.max(10, 4.5 / previewScale)}px` }}>
                       {impositionErrors.map((e, i) => <div key={i}>{e}</div>)}
                     </div>
                   ) : (

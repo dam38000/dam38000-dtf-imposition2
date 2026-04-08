@@ -3,7 +3,7 @@
 // ============================================================
 
 import { useState, useRef, useEffect } from 'react';
-import { launchImposition, fillPageWithImage, terminatePixelWorker } from '../lib/imposition';
+import { launchImposition, fillPageWithImage, terminatePixelWorker, searchVariants } from '../lib/imposition';
 import { PRIX_TABLES, FORMAT_MULTIPLES, roundToMultiple, getPrixUnitaire } from '../lib/pricing';
 import { PRODUCT_FORMATS, MAX_QUANTITY } from '../lib/constants';
 
@@ -14,6 +14,8 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
   const [impositionErrors, setImpositionErrors] = useState([]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [variantsChooser, setVariantsChooser] = useState(null);
+  const [showVariantsAsk, setShowVariantsAsk] = useState(false);
+  const [showTimeoutAsk, setShowTimeoutAsk] = useState(null); // 'monter' | 'optimal' | null
   const [calcProgress, setCalcProgress] = useState('');
   const [currentSheetIndex, setCurrentSheetIndex] = useState(0);
 
@@ -62,10 +64,7 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
     setImpositionErrors([]);
     setCurrentSheetIndex(0);
     const calcTimeout = setTimeout(() => {
-      calcStopRef.current = true;
-      terminatePixelWorker();
-      setIsCalculating(false);
-      setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul a d\u00e9pass\u00e9 60 secondes et a \u00e9t\u00e9 interrompu.', solution: 'R\u00e9duisez les quantit\u00e9s ou utilisez un format plus grand. Si le probl\u00e8me persiste, contactez Printmytransfer au 04 76 36 61 15.' });
+      setShowTimeoutAsk('monter');
     }, 60000);
     try {
       const mappedFiles = files.map(f => ({
@@ -76,16 +75,6 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
       const result = await launchImposition({
         files: mappedFiles, sheetSize, margin, impositionMode, activeTab,
         stopRef: calcStopRef,
-        onAskMoreVariants: (runs, variants, isComplete) => {
-          const mappedVariants = variants.map((v, i) => ({ items: v.items, label: v.label || `Variante ${i + 1}` }));
-          setVariantsChooser(prev => {
-            const idx = prev?.currentIdx || 0;
-            if (mappedVariants.length > 0 && idx < mappedVariants.length) {
-              setSheets([{ id: idx + 1, items: mappedVariants[idx].items, copies: runs, efficiency: 'N/A' }]);
-            }
-            return { variants: mappedVariants, runs, currentIdx: idx, searching: !isComplete };
-          });
-        },
         onProgress: (msg) => setCalcProgress(msg),
         onFirstResult: (intermediateResult) => {
           setSheets(intermediateResult.sheets || []);
@@ -101,16 +90,24 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
           return { ...d, made: onSheet > 0 ? onSheet * runsArrondi : d.made };
         });
       }
+      // Mettre à jour totalSheets avec l'arrondi
+      if (result.stats) {
+        result.stats.totalSheets = runsArrondi;
+      }
       setSheets(result.sheets || []);
       setStats(result.stats || null);
       setImpositionErrors(result.errors || []);
+      // Proposer des variantes si le calcul a réussi
+      if (result.sheets?.length > 0 && result.sheets[0]?.items?.length > 0) {
+        setShowVariantsAsk(true);
+      }
     } catch (err) {
       console.error('Erreur imposition:', err);
       const msg = err.message || String(err);
       if (msg.includes('memory') || msg.includes('Maximum') || msg.includes('MAX_FREE_RECTS')) {
         setErrorAlert({ title: 'Calcul impossible', message: 'Le calcul necessite trop de memoire pour cette combinaison.', solution: 'Reduisez les quantites, utilisez un format plus grand, ou essayez le mode Massicotable.' });
       } else if (msg.includes('timeout') || msg.includes('Timeout')) {
-        setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul a depasse le temps limite.', solution: 'Reduisez les quantites ou simplifiez le montage.' });
+        // Géré par la popup showTimeoutAsk
       } else {
         setErrorAlert({ title: 'Erreur de calcul', message: msg, solution: 'Si le probleme persiste, contactez Printmytransfer au 04 76 36 61 15.' });
       }
@@ -188,12 +185,8 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
     setOptimalPanel([]);
     setOptimalProgress('Demarrage...');
     const optimalTimeout = setTimeout(() => {
-      optimalStopRef.current = true;
-      terminatePixelWorker();
-      setIsOptimalRunning(false);
-      setOptimalProgress('');
-      setErrorAlert({ title: 'Calcul trop long', message: 'Le calcul optimal a d\u00e9pass\u00e9 2 minutes et a \u00e9t\u00e9 interrompu.', solution: 'R\u00e9duisez les quantit\u00e9s ou d\u00e9s\u00e9lectionnez le mode Imbrication. Si le probl\u00e8me persiste, contactez Printmytransfer au 04 76 36 61 15.' });
-    }, 120000);
+      setShowTimeoutAsk('optimal');
+    }, 60000);
 
     const mappedFiles = files.map(f => ({
       id: f.id, name: f.name, width_mm: f.width, height_mm: f.height,
@@ -218,6 +211,7 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
               files: mappedFiles, sheetSize: fmtDim, margin, impositionMode: mode, activeTab,
               stopRef: optimalStopRef,
               onProgress: (msg) => setOptimalProgress(`${modeLabel} / ${fmtName} — ${msg}`),
+              fastMode: true,
             });
             const runs = result.stats?.totalSheets || 0;
             const dt = (performance.now() - tCalc).toFixed(0);
@@ -289,6 +283,40 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
     }
   };
 
+  // ── Chercher des variantes (bouton manuel) ──
+  const [isSearchingVariants, setIsSearchingVariants] = useState(false);
+  const handleSearchVariants = async () => {
+    if (sheets.length === 0 || !sheets[0]?.items) return;
+    setIsSearchingVariants(true);
+    setCalcProgress('Recherche de variantes...');
+    try {
+      const mappedFiles = files.map(f => ({
+        id: f.id, name: f.name, width_mm: f.width, height_mm: f.height,
+        quantity: f.quantity, thumbnailUrl: f.thumbnailUrl,
+      }));
+      const activeTab = allowRotation ? 'compact' : 'norotate';
+      const runs = stats?.totalSheets || 1;
+      const variants = await searchVariants({
+        files: mappedFiles, sheetSize, margin, impositionMode, activeTab,
+        currentItems: sheets[0].items, runs,
+        stopRef: calcStopRef,
+        onProgress: (msg) => setCalcProgress(msg),
+      });
+      if (variants.length > 1) {
+        const mappedVariants = variants.map((v, i) => ({ items: v.items, label: v.label || `Variante ${i + 1}` }));
+        setVariantsChooser({ variants: mappedVariants, runs, currentIdx: 0, searching: false });
+      } else {
+        setCalcProgress('Aucune variante trouvée');
+        setTimeout(() => setCalcProgress(''), 2000);
+      }
+    } catch (err) {
+      console.error('Erreur recherche variantes:', err);
+    } finally {
+      setIsSearchingVariants(false);
+      setCalcProgress('');
+    }
+  };
+
   return {
     sheets, setSheets,
     stats, setStats,
@@ -309,5 +337,26 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
     handleRemplir,
     launchOptimal,
     applyOptimalResult,
+    handleSearchVariants,
+    isSearchingVariants,
+    showVariantsAsk, setShowVariantsAsk,
+    showTimeoutAsk,
+    handleTimeoutContinue: () => {
+      setShowTimeoutAsk(null);
+      // Ne rien faire — le calcul continue
+    },
+    handleTimeoutStop: () => {
+      setShowTimeoutAsk(null);
+      if (showTimeoutAsk === 'monter') {
+        calcStopRef.current = true;
+        terminatePixelWorker();
+        setIsCalculating(false);
+      } else if (showTimeoutAsk === 'optimal') {
+        optimalStopRef.current = true;
+        terminatePixelWorker();
+        setIsOptimalRunning(false);
+        setOptimalProgress('');
+      }
+    },
   };
 }
