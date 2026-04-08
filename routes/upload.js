@@ -856,4 +856,31 @@ function extractIccDescription(iccBuffer) {
   }
 }
 
+// ============================================================
+// DELETE /:id — Supprimer un dossier upload
+// GET /cleanup/:id — Supprimer via sendBeacon (fermeture page)
+// ============================================================
+const deleteUploadDir = (id) => {
+  const jobDir = path.join(__dirname, '..', 'uploads', id);
+  if (!fs.existsSync(jobDir)) return false;
+  try {
+    fs.rmSync(jobDir, { recursive: true, force: true });
+    console.log(`[DELETE] Dossier supprimé: ${jobDir}`);
+    return true;
+  } catch (err) {
+    console.error(`[DELETE] Erreur: ${err.message}`);
+    return false;
+  }
+};
+
+router.delete('/:id', (req, res) => {
+  deleteUploadDir(req.params.id);
+  res.json({ message: 'Supprimé' });
+});
+
+router.post('/cleanup/:id', (req, res) => {
+  deleteUploadDir(req.params.id);
+  res.json({ message: 'Supprimé' });
+});
+
 module.exports = router;
