@@ -77,7 +77,7 @@ export function SheetPreview({
                       <img src={d.src} alt={d.name} className="max-w-full max-h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[18px] font-bold text-gray-700 truncate">{d.name}</div>
+                      <div className="text-[13px] font-bold text-gray-700 truncate">{d.name}</div>
                       <div className="font-bold text-gray-600 flex gap-3 leading-tight" style={{ fontSize: '13px' }}>
                         <span>Qté cdé : <strong>{d.req}</strong></span>
                         <span>Qté fab : <strong>{d.made}</strong></span>
@@ -98,7 +98,7 @@ export function SheetPreview({
                       <img src={f.thumbnailUrl} alt={f.name} className="max-w-full max-h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[15px] font-bold text-gray-700 truncate">{f.name}</div>
+                      <div className="text-[11px] font-bold text-gray-700 truncate">{f.name}</div>
                       <div className="font-bold text-[13px] text-gray-500 flex gap-4">
                         <span>Qté cdé : <strong>{f.quantity}</strong></span>
                         <span className="text-gray-300">Qté fab : —</span>
@@ -133,24 +133,24 @@ export function SheetPreview({
 
         {/* Panneau d'aide — affiché uniquement si aucune planche et aucune erreur */}
         {sheets.length === 0 && impositionErrors.length === 0 && (
-          <div className="absolute inset-0 z-20 flex items-start justify-center pt-4 px-8 select-none pointer-events-none">
-            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl px-8 pt-5 pb-6">
-              <h2 className="text-2xl font-bold uppercase tracking-widest text-gray-500 text-center border-b border-gray-200 pb-3 mb-5">
+          <div className="absolute inset-0 z-20 flex items-start justify-center pt-2 px-4 select-none pointer-events-none overflow-y-auto">
+            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl px-6 pt-4 pb-5 pointer-events-auto">
+              <h2 className="text-xl font-bold uppercase tracking-widest text-gray-500 text-center border-b border-gray-200 pb-2 mb-3">
                 Utilisation du programme de montage
               </h2>
-              <div className="grid grid-cols-2 gap-x-12 gap-y-5 text-base text-gray-600">
+              <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-gray-600">
                 <div>
-                  <div className="font-bold text-gray-800 text-lg mb-1">1 — Charger vos fichiers</div>
+                  <div className="font-bold text-gray-800 text-base mb-1">1 — Charger vos fichiers</div>
                   <p className="leading-relaxed mb-1">Chargez vos fichiers ou déposez-les dans l'espace vert clair. Par défaut, les fichiers seront rognés à 1mm du bord. Si vous ne le souhaitez pas, décochez la case correspondante. Vous pouvez rogner chaque dessin individuellement ou globalement.</p>
                   <p>• Le bouton <span className="font-semibold text-gray-700">"Remplir"</span> permet de remplir la feuille à condition qu'un seul dessin soit chargé.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-lg mb-1">3 — Montage le plus économique</div>
+                  <div className="font-bold text-gray-800 text-base mb-1">3 — Montage le plus économique</div>
                   <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Voir les montages les plus économiques"</span> calcule les prix pour tous les types et formats. Le tableau vous affichera toutes les possibilités pour choisir la plus économique.</p>
                   <p className="mt-2 text-gray-500 italic">Nota : le classement de la solution la plus économique est basé sur le prix catalogue.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-lg mb-1">2 — Faire une imposition</div>
+                  <div className="font-bold text-gray-800 text-base mb-1">2 — Faire une imposition</div>
                   <p>• Choisissez le format (en haut)</p>
                   <p>• Définissez la bordure (défaut 6mm)</p>
                   <p>• Choisissez le type de montage : <span className="font-bold text-gray-700">Massicotable — Non Massicotable — Imbrication</span></p>
@@ -158,7 +158,7 @@ export function SheetPreview({
                   <p className="mt-1">Une fenêtre vous proposera d'autres agencements avec le même nombre d'exemplaires.</p>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-800 text-lg mb-1">4 — Export</div>
+                  <div className="font-bold text-gray-800 text-base mb-1">4 — Export</div>
                   <p className="leading-relaxed">Le bouton <span className="font-semibold text-gray-700">"Export dans votre espace"</span> exporte le montage vers printmytransfer.fr. Vous pouvez aussi exporter le fichier de découpe.</p>
                 </div>
               </div>

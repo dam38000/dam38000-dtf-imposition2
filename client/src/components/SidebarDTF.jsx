@@ -23,8 +23,9 @@ export function SidebarDTF({
 
       {/* ── Header vert — DTF uniquement ── */}
       <div className="p-4 bg-green-700 text-white text-center flex-shrink-0">
-        <h1 className="text-lg font-bold uppercase tracking-wider">Montage DTF</h1>
-        <h2 className="text-xl font-bold text-white mt-1">by Printmytransfer</h2>
+        <h1 className="text-lg font-bold uppercase tracking-wider">Montage et Correction</h1>
+        <h1 className="text-lg font-bold uppercase tracking-wider">Automatique</h1>
+        <h2 className="text-sm font-bold text-white mt-1">by Printmytransfer.fr</h2>
       </div>
 
       {/* ── Parametres feuille ── */}
