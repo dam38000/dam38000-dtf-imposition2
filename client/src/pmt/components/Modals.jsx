@@ -2,9 +2,24 @@
 //  Modals.jsx — Upload overlay, warning quantité, alerte erreur
 // ============================================================
 
+import { useState, useEffect, useRef } from 'react';
 import { MAX_QUANTITY } from '../lib/constants';
 
 export function UploadOverlay({ uploadStatus }) {
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (uploadStatus) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
+    } else {
+      setElapsed(0);
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    }
+    return () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [uploadStatus]);
+
   if (!uploadStatus) return null;
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]">
@@ -12,7 +27,10 @@ export function UploadOverlay({ uploadStatus }) {
         <div className="text-6xl mb-4 animate-spin-slow">&#9203;</div>
         <div className="text-xl font-bold mb-2">{uploadStatus.step}</div>
         <div className="text-base text-gray-300 mb-1">{uploadStatus.fileName}</div>
-        <div className="text-sm text-gray-500">Fichier {uploadStatus.current} / {uploadStatus.total}</div>
+        <div className="text-sm text-gray-500">{uploadStatus.current > 0 ? `Fichier ${uploadStatus.current} / ${uploadStatus.total}` : ''}</div>
+        <div className="text-white/70 text-lg font-mono mt-2">
+          {Math.floor(elapsed / 60).toString().padStart(2, '0')}:{(elapsed % 60).toString().padStart(2, '0')}
+        </div>
       </div>
     </div>
   );

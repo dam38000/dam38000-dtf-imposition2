@@ -33,7 +33,7 @@ const SCREEN_DPI = 96;
 const IMAGE_DPI = 300;
 const SCALE_REAL = SCREEN_DPI / IMAGE_DPI; // ~0.32 = taille réelle
 
-export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
+export default function FinesseModal_UVDTF({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -42,8 +42,8 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   const [showConfirm, setShowConfirm] = useState(false);
   const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
   const [bgMode, setBgMode] = useState('texture'); // 'texture' | 'custom' | 'plain'
-  const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('finesse_custom_bg') || null);
-  const [customBgScale, setCustomBgScale] = useState(() => parseFloat(localStorage.getItem('finesse_custom_bg_scale')) || 1);
+  const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('uvdtf_finesse_custom_bg') || null);
+  const [customBgScale, setCustomBgScale] = useState(() => parseFloat(localStorage.getItem('uvdtf_finesse_custom_bg_scale')) || 1);
   const customBgInputRef = useRef(null);
   const texBlend = 'luminosity';
   // Compat avec ancien code
@@ -53,17 +53,17 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   // Couleurs personnalisables (sauvegardées en localStorage)
 
   const [patchColors, setPatchColors] = useState(() => [
-    localStorage.getItem('finesse_patch0') || '#2563eb',
-    localStorage.getItem('finesse_patch1') || '#dc2626',
-    localStorage.getItem('finesse_patch2') || '#16a34a',
-    localStorage.getItem('finesse_patch3') || '#1a1a1a',
-    localStorage.getItem('finesse_patch4') || '#ff9800',
-    localStorage.getItem('finesse_patch5') || '#9c27b0',
+    localStorage.getItem('uvdtf_finesse_patch0') || '#2563eb',
+    localStorage.getItem('uvdtf_finesse_patch1') || '#dc2626',
+    localStorage.getItem('uvdtf_finesse_patch2') || '#16a34a',
+    localStorage.getItem('uvdtf_finesse_patch3') || '#1a1a1a',
+    localStorage.getItem('uvdtf_finesse_patch4') || '#ff9800',
+    localStorage.getItem('uvdtf_finesse_patch5') || '#9c27b0',
   ]);
 
   const savePatchColor = (idx, color) => {
     setPatchColors(prev => { const next = [...prev]; next[idx] = color; return next; });
-    localStorage.setItem(`finesse_patch${idx}`, color);
+    localStorage.setItem(`uvdtf_finesse_patch${idx}`, color);
     setBgColor(color);
   };
   const patchInputRefs = useRef([]);
@@ -505,7 +505,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               {customBgData && (
                 <>
                   <input type="range" min="0.5" max="2" step="0.1" value={customBgScale}
-                    onChange={e => { const v = parseFloat(e.target.value); setCustomBgScale(v); localStorage.setItem('finesse_custom_bg_scale', String(v)); }}
+                    onChange={e => { const v = parseFloat(e.target.value); setCustomBgScale(v); localStorage.setItem('uvdtf_finesse_custom_bg_scale', String(v)); }}
                     title={`Taille : x${customBgScale}`}
                     className="accent-blue-500"
                     style={{ width: 50, height: 8 }} />
@@ -527,8 +527,8 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
                   setCustomBgData(dataUrl);
                   setCustomBgScale(1);
                   setBgMode('custom');
-                  localStorage.setItem('finesse_custom_bg', dataUrl);
-                  localStorage.setItem('finesse_custom_bg_scale', '1');
+                  localStorage.setItem('uvdtf_finesse_custom_bg', dataUrl);
+                  localStorage.setItem('uvdtf_finesse_custom_bg_scale', '1');
                 };
                 reader.readAsDataURL(file);
                 e.target.value = '';

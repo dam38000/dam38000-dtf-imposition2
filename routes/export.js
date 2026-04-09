@@ -35,13 +35,8 @@ router.post('/dessin', async (req, res) => {
     const jobId = uuidv4();
     const tmpFiles = [];
 
-    // Créer le canvas transparent avec le profil eciRGB v2 (évite conversion couleur à la composition)
-    const canvasPath = path.join(TMP_DIR, `canvas_${jobId}.png`);
-    execSync(`magick -size ${canvasW}x${canvasH} xc:none -profile "${ECIRGB_PROFILE}" -density 300 -units PixelsPerInch PNG32:"${canvasPath}"`, { stdio: 'pipe' });
-    tmpFiles.push(canvasPath);
-
-    // Composer chaque image sur le canvas
-    let currentCanvas = canvasPath;
+    // Préparer les images (resize + rotation) puis composer en une seule commande
+    const preparedPaths = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const convertedPath = path.join(UPLOADS_DIR, item.file_id, 'converted.png');
@@ -55,7 +50,6 @@ router.post('/dessin', async (req, res) => {
       const pxX = mmToPx(item.x);
       const pxY = mmToPx(item.y);
 
-      // Préparer l'image : strip profil + resize (pas de conversion couleur)
       const preparedPath = path.join(TMP_DIR, `prep_${jobId}_${i}.png`);
       if (item.rotated) {
         execSync(`magick "${convertedPath}" -rotate 90 -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
@@ -63,18 +57,18 @@ router.post('/dessin', async (req, res) => {
         execSync(`magick "${convertedPath}" -resize ${pxW}x${pxH}! "${preparedPath}"`, { stdio: 'pipe' });
       }
       tmpFiles.push(preparedPath);
-
-      // Composer sur le canvas
-      const nextCanvas = path.join(TMP_DIR, `canvas_${jobId}_${i}.png`);
-      execSync(`magick "${currentCanvas}" "${preparedPath}" -geometry +${pxX}+${pxY} -composite "${nextCanvas}"`, { stdio: 'pipe' });
-      tmpFiles.push(nextCanvas);
-      currentCanvas = nextCanvas;
+      preparedPaths.push({ path: preparedPath, x: pxX, y: pxY });
     }
 
-    // Densité 300 DPI sur le résultat final
+    // Composition en UNE seule commande ImageMagick
     const outPath = path.join(TMP_DIR, `dessin_${jobId}.png`);
-    execSync(`magick "${currentCanvas}" -density 300 -units PixelsPerInch "${outPath}"`, { stdio: 'pipe' });
     tmpFiles.push(outPath);
+    let cmd = `magick -size ${canvasW}x${canvasH} xc:none`;
+    for (const p of preparedPaths) {
+      cmd += ` "${p.path}" -geometry +${p.x}+${p.y} -composite`;
+    }
+    cmd += ` -density 300 -units PixelsPerInch PNG32:"${outPath}"`;
+    execSync(cmd, { stdio: 'pipe', maxBuffer: 100 * 1024 * 1024 });
 
     // Injecter le profil ICC eciRGB v2 dans le PNG (sans conversion de pixels)
     injectIccProfile(outPath, ECIRGB_PROFILE);

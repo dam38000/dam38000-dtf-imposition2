@@ -65,7 +65,7 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
         }
       }
     }
-    setUploadStatus(null);
+    setUploadStatus({ step: 'Préparation de l\'analyse...', fileName: '', current: 0, total: 0 });
   }, [setErrorAlert]);
 
   // ── Drag & Drop ──
@@ -98,10 +98,11 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
     }
   };
 
-  // ── Supprimer un fichier ──
+  // ── Supprimer un fichier (client + serveur) ──
   const removeFile = (id) => {
     setFiles(prev => prev.filter(f => f.id !== id));
     resetPlanche();
+    fetch(`/api/upload/${id}`, { method: 'DELETE' }).catch(() => {});
   };
 
   // ── Rogner un fichier (auto-crop via serveur ImageMagick) ──
@@ -143,13 +144,28 @@ export function useFiles({ autoCrop, setErrorAlert, resetPlanche }) {
     if (!autoCrop) return;
     const uncropped = files.filter(f => !f.cropped && !croppingRef.current.has(f.id));
     if (uncropped.length === 0) return;
-    // Marquer immédiatement comme en cours pour éviter les doublons
-    uncropped.forEach(f => croppingRef.current.add(f.id));
     uncropped.forEach(f => cropFile(f.id));
   }, [files, autoCrop, cropFile]);
 
-  // ── Tout effacer ──
-  const clearAll = () => { setFiles([]); resetPlanche(); };
+  // ── Tout effacer (client + serveur) ──
+  const clearAll = () => {
+    files.forEach(f => fetch(`/api/upload/${f.id}`, { method: 'DELETE' }).catch(() => {}));
+    setFiles([]);
+    resetPlanche();
+  };
+
+  // ── Nettoyage à la fermeture de la page ──
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  useEffect(() => {
+    const cleanup = () => {
+      filesRef.current.forEach(f => {
+        navigator.sendBeacon(`/api/upload/cleanup/${f.id}`);
+      });
+    };
+    window.addEventListener('beforeunload', cleanup);
+    return () => window.removeEventListener('beforeunload', cleanup);
+  }, []);
 
   return {
     files, setFiles,

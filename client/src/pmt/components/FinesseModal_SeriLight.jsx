@@ -33,7 +33,7 @@ const SCREEN_DPI = 96;
 const IMAGE_DPI = 300;
 const SCALE_REAL = SCREEN_DPI / IMAGE_DPI; // ~0.32 = taille réelle
 
-export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
+export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -41,9 +41,17 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   const correctionIntensity = 1.3; // intensité fixe
   const [showConfirm, setShowConfirm] = useState(false);
   const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
-  const [bgMode, setBgMode] = useState('texture'); // 'texture' | 'custom' | 'plain'
-  const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('finesse_custom_bg') || null);
-  const [customBgScale, setCustomBgScale] = useState(() => parseFloat(localStorage.getItem('finesse_custom_bg_scale')) || 1);
+  const [borderOverlaySrc, setBorderOverlaySrc] = useState(null);
+  const [borderOpacity, setBorderOpacity] = useState(0);
+  const [dilatedOpacity, setDilatedOpacity] = useState(0);
+  const [tissuMode, setTissuMode] = useState('clair'); // 'clair' | 'fonce' | null (manuel)
+  const [showFoncePopup, setShowFoncePopup] = useState(false);
+  const [showContour, setShowContour] = useState(false);
+  const [contourColor, setContourColor] = useState(null); // couleur figée du contour
+  const BORDER_WIDTH = 5; // px
+  const [bgMode, setBgMode] = useState('plain'); // 'texture' | 'custom' | 'plain'
+  const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('serilight_finesse_custom_bg') || null);
+  const [customBgScale, setCustomBgScale] = useState(() => parseFloat(localStorage.getItem('serilight_finesse_custom_bg_scale')) || 1);
   const customBgInputRef = useRef(null);
   const texBlend = 'luminosity';
   // Compat avec ancien code
@@ -53,17 +61,17 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
   // Couleurs personnalisables (sauvegardées en localStorage)
 
   const [patchColors, setPatchColors] = useState(() => [
-    localStorage.getItem('finesse_patch0') || '#2563eb',
-    localStorage.getItem('finesse_patch1') || '#dc2626',
-    localStorage.getItem('finesse_patch2') || '#16a34a',
-    localStorage.getItem('finesse_patch3') || '#1a1a1a',
-    localStorage.getItem('finesse_patch4') || '#ff9800',
-    localStorage.getItem('finesse_patch5') || '#9c27b0',
+    localStorage.getItem('serilight_finesse_patch0') || '#2563eb',
+    localStorage.getItem('serilight_finesse_patch1') || '#dc2626',
+    localStorage.getItem('serilight_finesse_patch2') || '#16a34a',
+    localStorage.getItem('serilight_finesse_patch3') || '#1a1a1a',
+    localStorage.getItem('serilight_finesse_patch4') || '#ff9800',
+    localStorage.getItem('serilight_finesse_patch5') || '#9c27b0',
   ]);
 
   const savePatchColor = (idx, color) => {
     setPatchColors(prev => { const next = [...prev]; next[idx] = color; return next; });
-    localStorage.setItem(`finesse_patch${idx}`, color);
+    localStorage.setItem(`serilight_finesse_patch${idx}`, color);
     setBgColor(color);
   };
   const patchInputRefs = useRef([]);
@@ -149,6 +157,83 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
       hdOverlayRef.current = overlay;
     }
   }, [file?.id, file?.overlaySrc, file?.correctedSrc]);
+
+  // Mise à jour automatique bordure/dilaté selon le mode tissu et la luminance
+  useEffect(() => {
+    if (!tissuMode) return;
+    const r = parseInt(bgColor.slice(1,3),16), g = parseInt(bgColor.slice(3,5),16), b = parseInt(bgColor.slice(5,7),16);
+    const L = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    if (tissuMode === 'clair') {
+      setBorderOpacity(L < 200 ? 1 : 0);
+      setDilatedOpacity(0);
+    } else if (tissuMode === 'fonce') {
+      setBorderOpacity(0);
+      setDilatedOpacity(1);
+    }
+  }, [bgColor, tissuMode]);
+
+  // Générer l'overlay de bordure intérieure (5px le long du contour alpha)
+  useEffect(() => {
+    if (!file) return;
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.src = file.correctedSrc || `/uploads/${file.id}/converted.png`;
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const alpha = imgData.data;
+
+      // Créer un masque : pixel opaque (alpha > 10) = 1, sinon 0
+      const mask = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        mask[i] = alpha[i * 4 + 3] > 10 ? 1 : 0;
+      }
+
+      // Éroder le masque de BORDER_WIDTH pixels (trouver les pixels intérieurs proches du bord)
+      const eroded = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (mask[y * w + x] === 0) continue;
+          let isInner = true;
+          for (let dy = -BORDER_WIDTH; dy <= BORDER_WIDTH && isInner; dy++) {
+            for (let dx = -BORDER_WIDTH; dx <= BORDER_WIDTH && isInner; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || nx >= w || ny < 0 || ny >= h || mask[ny * w + nx] === 0) {
+                isInner = false;
+              }
+            }
+          }
+          eroded[y * w + x] = isInner ? 1 : 0;
+        }
+      }
+
+      // Bordure = masque original - érodé (pixels opaques mais pas intérieurs)
+      // On crée un masque blanc opaque sur la zone de bordure
+      const borderCanvas = document.createElement('canvas');
+      borderCanvas.width = w;
+      borderCanvas.height = h;
+      const bCtx = borderCanvas.getContext('2d');
+      const borderData = bCtx.createImageData(w, h);
+      for (let i = 0; i < w * h; i++) {
+        if (mask[i] === 1 && eroded[i] === 0) {
+          borderData.data[i * 4] = 255;     // R (blanc)
+          borderData.data[i * 4 + 1] = 255; // G
+          borderData.data[i * 4 + 2] = 255; // B
+          borderData.data[i * 4 + 3] = 255; // A
+        }
+      }
+      bCtx.putImageData(borderData, 0, 0);
+      setBorderOverlaySrc(borderCanvas.toDataURL('image/png'));
+
+      console.log('[Bordure] Overlay bordure généré:', w, 'x', h);
+    };
+  }, [file?.id, file?.correctedSrc, BORDER_WIDTH]);
 
   const LOUPE_ACTIVE = false; // passer à true pour réactiver la loupe
 
@@ -338,12 +423,13 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
     setIsSaving(false);
   };
 
-  // Fermeture : si modifié, afficher le dialogue de confirmation
+  // Fermeture : si modifié (correction ou bordure/dilatation), afficher le dialogue
+  const hasBorderChanges = (borderOpacity > 0 || dilatedOpacity > 0) && file.dilated4Src;
   const handleRequestClose = () => {
-    if (file.correctedSrc) {
+    if (file.correctedSrc || hasBorderChanges) {
       setShowConfirm(true);
     } else {
-      onClose(false); // pas modifié, fermer directement
+      onClose(false);
     }
   };
 
@@ -351,15 +437,38 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
     setShowConfirm(false);
     setIsSaving(true);
     startTimer('Enregistrement en cours');
-    await onSave(file.id);
+    try {
+      // 1) Si correction finesses, sauvegarder d'abord
+      if (file.correctedSrc) {
+        await onSave(file.id);
+      }
+      // 2) Si bordure/dilatation modifiées, composer puis sauvegarder
+      if (hasBorderChanges) {
+        const resp = await fetch('/api/analyze/compose-border', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: file.id, border_opacity: borderOpacity, dilated_opacity: dilatedOpacity }),
+        });
+        if (resp.ok) {
+          // Sauvegarder le composé
+          await fetch('/api/analyze/save-correction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: file.id, source: 'composed' }),
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[FinesseModal] Erreur sauvegarde:', err);
+    }
     stopTimer();
     setIsSaving(false);
-    onClose(false); // déjà sauvegardé
+    onClose(false);
   };
 
   const handleConfirmNoSave = () => {
     setShowConfirm(false);
-    onClose(false); // fermer sans sauvegarder
+    onClose(false);
   };
 
   const handleConfirmCancel = () => {
@@ -393,25 +502,48 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
             {/* Groupe Actions finesses */}
+            <div className="w-px h-7 bg-gray-200 mx-1" />
+
+            {/* Slider bordure intérieure */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
-              <button
-                onClick={handleCorrect}
-                disabled={isCorrecting || !file.hasIssues || file.correctedSrc}
-                title={!file.hasIssues ? "Aucune finesse détectée sur ce fichier" : file.correctedSrc ? "Ce fichier a déjà été corrigé" : "Épaissir automatiquement les traits fins détectés pour améliorer la qualité d'impression DTF"}
-                className={`px-3 py-1 rounded-md font-bold text-xs flex items-center gap-1.5 transition-all ${file.hasIssues && !isCorrecting && !file.correctedSrc ? 'bg-fuchsia-600 text-white hover:bg-fuchsia-700 shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-              >
-                <Icons.Maximize size={12} />
-                {isCorrecting ? 'Correction…' : file.correctedSrc ? 'Déjà corrigé' : 'Corriger Finesses'}
-              </button>
-              <button
-                onClick={() => setShowOverlay(!showOverlay)}
-                disabled={!file.overlaySrc}
-                title={!file.overlaySrc ? "Les finesses ont été corrigées — l'overlay n'est plus disponible" : showOverlay ? "Masquer la surimpression verte des finesses détectées" : "Afficher en vert les zones de finesses détectées sur l'image"}
-                className={`px-3 py-1 rounded-md font-bold text-xs transition-all ${!file.overlaySrc ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : showOverlay ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm ring-2 ring-green-300' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
-              >
-                Affichage Finesses
-              </button>
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Bordure</span>
+              <input type="range" min="0" max="1" step="0.05" value={borderOpacity}
+                onChange={e => { setBorderOpacity(parseFloat(e.target.value)); setTissuMode(null); }}
+                title={`Opacité bordure : ${Math.round(borderOpacity * 100)}%`}
+                className="w-16 accent-red-500" />
+              <span className="text-[10px] font-bold text-gray-600 w-7">{Math.round(borderOpacity * 100)}%</span>
             </div>
+
+            {/* Slider dilaté */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Dilaté</span>
+              <input type="range" min="0" max="1" step="0.05" value={dilatedOpacity}
+                onChange={e => { setDilatedOpacity(parseFloat(e.target.value)); setTissuMode(null); }}
+                title={`Opacité dilaté : ${Math.round(dilatedOpacity * 100)}%`}
+                className="w-16 accent-blue-500" />
+              <span className="text-[10px] font-bold text-gray-600 w-7">{Math.round(dilatedOpacity * 100)}%</span>
+            </div>
+
+            {/* Presets tissu */}
+            {(() => {
+              const r = parseInt(bgColor.slice(1,3),16), g = parseInt(bgColor.slice(3,5),16), b = parseInt(bgColor.slice(5,7),16);
+              const L = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+              return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${L > 128 ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-700 text-white'}`}>L={L}</span>;
+            })()}
+            <button onClick={() => {
+              if (showFoncePopup) { alert('Fermez la fenêtre tissu foncé'); return; }
+              setTissuMode(tissuMode === 'clair' ? null : 'clair');
+            }}
+              className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${showFoncePopup ? 'bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed' : tissuMode === 'clair' ? 'bg-yellow-300 text-yellow-900 border-yellow-500 ring-2 ring-yellow-400' : 'bg-yellow-100 text-yellow-800 border-yellow-300 hover:bg-yellow-200'}`}>
+              Version tissu clair
+            </button>
+            <button onClick={() => {
+              if (tissuMode === 'fonce') { setTissuMode(null); setShowFoncePopup(false); setShowContour(false); setContourColor(null); }
+              else { setTissuMode('fonce'); setShowFoncePopup(true); setDilatedOpacity(1); }
+            }}
+              className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${tissuMode === 'fonce' ? 'bg-gray-900 text-white border-blue-500 ring-2 ring-blue-400' : 'bg-gray-700 text-white border-gray-600 hover:bg-gray-800'}`}>
+              Version tissu foncé
+            </button>
 
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
@@ -438,7 +570,16 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
         </div>
 
         {/* Panneaux — taille réelle avec scroll */}
-        <div className="flex flex-1 gap-3 min-h-0">
+        <div className="flex flex-1 gap-3 min-h-0 relative">
+
+          {/* Texte mode tissu — superposé en haut des panneaux */}
+          {tissuMode && (
+            <div className="absolute top-4 left-0 right-0 z-40 flex justify-center pointer-events-none">
+              <span className={`text-[22px] font-bold italic px-6 py-1 rounded-lg shadow-lg ${tissuMode === 'clair' ? 'text-yellow-800 bg-yellow-100/90' : 'text-blue-200 bg-gray-800/90'}`}>
+                {tissuMode === 'clair' ? 'dessin modifié pour tissus clairs' : 'dessin modifié pour tissus foncés'}
+              </span>
+            </div>
+          )}
 
           {/* Barre de couleurs de fond (côté gauche) */}
           <div className="flex flex-col gap-1.5 py-2 flex-shrink-0">
@@ -447,7 +588,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               return (
                 <div key={idx} className="relative">
                   <button
-                    onClick={() => setBgColor(color)}
+                    onClick={() => { setBgColor(color); if (bgMode === 'custom') setBgMode('plain'); }}
                     onDoubleClick={() => isCustom ? openHslEditor(idx) : patchInputRefs.current[idx]?.click()}
                     title="Clic: appliquer — double-clic: changer couleur"
                     className={`w-7 h-7 rounded border-2 transition-all ${bgColor === color ? 'border-white ring-2 ring-blue-500 scale-110' : 'border-gray-400 hover:scale-105'}`}
@@ -505,7 +646,7 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               {customBgData && (
                 <>
                   <input type="range" min="0.5" max="2" step="0.1" value={customBgScale}
-                    onChange={e => { const v = parseFloat(e.target.value); setCustomBgScale(v); localStorage.setItem('finesse_custom_bg_scale', String(v)); }}
+                    onChange={e => { const v = parseFloat(e.target.value); setCustomBgScale(v); localStorage.setItem('serilight_finesse_custom_bg_scale', String(v)); }}
                     title={`Taille : x${customBgScale}`}
                     className="accent-blue-500"
                     style={{ width: 50, height: 8 }} />
@@ -523,12 +664,33 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = () => {
-                  const dataUrl = reader.result;
-                  setCustomBgData(dataUrl);
-                  setCustomBgScale(1);
-                  setBgMode('custom');
-                  localStorage.setItem('finesse_custom_bg', dataUrl);
-                  localStorage.setItem('finesse_custom_bg_scale', '1');
+                  // Réduire l'image à max 400px pour tenir dans localStorage
+                  const tmpImg = new Image();
+                  tmpImg.onload = () => {
+                    const maxSize = 400;
+                    let w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
+                    if (w > maxSize || h > maxSize) {
+                      const ratio = Math.min(maxSize / w, maxSize / h);
+                      w = Math.round(w * ratio);
+                      h = Math.round(h * ratio);
+                    }
+                    const c = document.createElement('canvas');
+                    c.width = w; c.height = h;
+                    c.getContext('2d').drawImage(tmpImg, 0, 0, w, h);
+                    const dataUrl = c.toDataURL('image/jpeg', 0.8);
+                    console.log('[Tissu client] Taille réduite:', Math.round(dataUrl.length / 1024), 'Ko', `(${w}x${h})`);
+                    setCustomBgData(dataUrl);
+                    setCustomBgScale(1);
+                    setBgMode('custom');
+                    try {
+                      localStorage.setItem('serilight_finesse_custom_bg', dataUrl);
+                      localStorage.setItem('serilight_finesse_custom_bg_scale', '1');
+                      console.log('[Tissu client] Sauvegardé dans localStorage');
+                    } catch (err) {
+                      console.error('[Tissu client] Erreur localStorage:', err.message);
+                    }
+                  };
+                  tmpImg.src = reader.result;
                 };
                 reader.readAsDataURL(file);
                 e.target.value = '';
@@ -541,12 +703,12 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             ref={leftPanelRef}
             className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
             style={{
-              backgroundColor: bgColor,
+              backgroundColor: customBgImage ? undefined : bgColor,
               backgroundImage: customBgImage ? `url(${customBgImage})` : (bgTexture ? 'url(/image4.png)' : undefined),
               backgroundSize: customBgImage ? `${customBgScale * 100}%` : (bgTexture ? '200% 200%' : undefined),
               backgroundPosition: 'center',
               backgroundRepeat: customBgImage ? 'repeat' : undefined,
-              backgroundBlendMode: (customBgImage || bgTexture) ? texBlend : undefined,
+              backgroundBlendMode: customBgImage ? undefined : (bgTexture ? texBlend : undefined),
             }}
             onMouseDown={(e) => handleMouseDown('left', e)}
             onMouseUp={handleMouseUp}
@@ -559,26 +721,59 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
+                {/* Image dilatée (sous l'originale) */}
+                {/* Contour 7px couleur figée en arrière-plan */}
+                {showContour && contourColor && file.contour7Src && (
+                  <div style={{
+                    width: '100%', height: '100%',
+                    position: 'absolute', inset: 0, zIndex: 0,
+                    backgroundColor: contourColor,
+                    WebkitMaskImage: `url(${file.contour7Src})`,
+                    WebkitMaskSize: '100% 100%',
+                    maskImage: `url(${file.contour7Src})`,
+                    maskSize: '100% 100%',
+                  }} />
+                )}
+                {/* Image dilatée 4px */}
+                {file.dilated4Src && dilatedOpacity > 0 && (
+                  <img
+                    src={file.dilated4Src}
+                    alt="Dilaté"
+                    style={{
+                      width: '100%', height: '100%',
+                      imageRendering: 'crisp-edges',
+                      position: 'absolute', inset: 0, zIndex: 1,
+                      opacity: dilatedOpacity,
+                    }}
+                  />
+                )}
                 <img
                   src={file.correctedSrc || `/uploads/${file.id}/converted.png`}
                   alt="Original"
                   style={{
                     width: '100%', height: '100%',
                     imageRendering: 'crisp-edges',
-                    position: 'absolute', inset: 0, zIndex: 1,
+                    position: 'absolute', inset: 0, zIndex: 2,
                   }}
                 />
-                {file.overlaySrc && showOverlay && (
-                  <img
-                    src={file.overlaySrc}
-                    alt="Overlay finesses"
+                {/* Overlay finesses masqué pour SeriLight */}
+                {borderOverlaySrc && borderOpacity > 0 && (
+                  <div
                     style={{
                       width: '100%',
                       height: '100%',
-                      imageRendering: 'crisp-edges', mixBlendMode: 'screen',
                       position: 'absolute',
                       inset: 0,
-                      zIndex: 2,
+                      zIndex: 3,
+                      opacity: borderOpacity,
+                      backgroundColor: bgColor,
+                      backgroundImage: customBgImage ? `url(${customBgImage})` : (bgTexture ? 'url(/image4.png)' : undefined),
+                      backgroundSize: customBgImage ? `${customBgScale * 100}%` : (bgTexture ? '200% 200%' : undefined),
+                      backgroundPosition: 'center',
+                      WebkitMaskImage: `url(${borderOverlaySrc})`,
+                      WebkitMaskSize: '100% 100%',
+                      maskImage: `url(${borderOverlaySrc})`,
+                      maskSize: '100% 100%',
                     }}
                   />
                 )}
@@ -591,12 +786,12 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
             ref={rightPanelRef}
             className="w-1/2 h-full rounded border border-gray-300 overflow-auto cursor-grab"
             style={{
-              backgroundColor: bgColor,
+              backgroundColor: customBgImage ? undefined : bgColor,
               backgroundImage: customBgImage ? `url(${customBgImage})` : (bgTexture ? 'url(/image4.png)' : undefined),
               backgroundSize: customBgImage ? `${customBgScale * 100}%` : (bgTexture ? '200% 200%' : undefined),
               backgroundPosition: 'center',
               backgroundRepeat: customBgImage ? 'repeat' : undefined,
-              backgroundBlendMode: (customBgImage || bgTexture) ? texBlend : undefined,
+              backgroundBlendMode: customBgImage ? undefined : (bgTexture ? texBlend : undefined),
             }}
             onMouseDown={(e) => handleMouseDown('right', e)}
             onMouseUp={handleMouseUp}
@@ -608,17 +803,8 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
               height: `max(100%, ${(file.heightPx || 1000) * SCALE_REAL * zoomLevel + 80}px)`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              {file.overlaySrc && showOverlay ? (
-                <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
-                  <img
-                    src={file.overlaySrc}
-                    alt="Défauts"
-                    style={{ width: '100%', height: '100%', imageRendering: 'crisp-edges', mixBlendMode: 'multiply' }}
-                  />
-                </div>
-              ) : (
-                <span className="text-white text-sm font-bold text-center leading-relaxed">{file.overlaySrc ? 'Overlay masqué' : 'Les finesses ont été épaissies'}</span>
-              )}
+              {/* Panneau droit vide pour SeriLight */}
+              <span className="text-gray-400 text-sm font-bold text-center leading-relaxed">Panneau de visualisation</span>
             </div>
           </div>
         </div>
@@ -749,6 +935,44 @@ export default function FinesseModal({ file, finesse, onClose, onCorrectFinesse,
         </div>
         );
       })()}
+
+      {/* Popup choix couleur tissu foncé */}
+      {showFoncePopup && (
+        <div className="fixed top-1/2 right-10 -translate-y-1/2 z-[60]">
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-80 border-2 border-gray-300"
+            onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-800 mb-2">Vous avez choisi de mettre votre transfert sur un tissu foncé</h3>
+            <p className="text-sm text-gray-600 mb-2">Choisissez la couleur de votre tissu parmi les patchs.</p>
+            <p className="text-xs text-gray-400 italic mb-3">(en double cliquant sur le patch vous pouvez choisir une couleur)</p>
+            <div className="w-12 h-12 rounded-lg border-2 border-gray-300 mx-auto mb-4 shadow-inner"
+              style={{ backgroundColor: contourColor || bgColor }} />
+            <div className="flex justify-center gap-3">
+              <button onClick={(e) => {
+                e.stopPropagation();
+                setShowContour(true);
+                setContourColor(bgColor);
+              }}
+                disabled={showContour}
+                className={`px-5 py-2 font-bold rounded-lg transition-colors ${showContour ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600'}`}>
+                OK
+              </button>
+              <button onClick={(e) => {
+                e.stopPropagation();
+                setShowFoncePopup(false);
+                setShowContour(false);
+                setContourColor(null);
+                setTissuMode(null);
+              }}
+                className={`px-5 py-2 font-bold rounded-lg transition-colors ${showContour ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                Annuler
+              </button>
+            </div>
+            {showContour && (
+              <p className="text-sm font-bold text-green-600 text-center mt-3">Vous avez choisi la couleur ci-dessus</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Dialogue de confirmation à la fermeture */}
       {showConfirm && (

@@ -4,7 +4,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PRODUCT_FORMATS } from './lib/constants';
-import { roundToMultiple } from './lib/pricing';
+import { roundToMultiple, getPrixUnitaire, PRIX_TABLES } from './lib/pricing';
 import { useFiles } from './hooks/useFiles';
 import { useImposition } from './hooks/useImposition';
 import { useExport } from './hooks/useExport';
@@ -14,13 +14,16 @@ import { SheetPreview } from './components/SheetPreview';
 import { OptimalModal } from './components/OptimalModal';
 import { VariantsChooser } from './components/VariantsChooser';
 import { UploadOverlay, QuantityWarning, ErrorAlert } from './components/Modals';
-import FinesseModal from './components/FinesseModal';
+import FinesseModal_DTF from './components/FinesseModal_DTF';
+import FinesseModal_UVDTF from './components/FinesseModal_UVDTF';
+import FinesseModal_Seri from './components/FinesseModal_Seri';
+import FinesseModal_SeriLight from './components/FinesseModal_SeriLight';
 // Fonctions client conservées mais plus utilisées (version serveur ci-dessous)
 // import { generateExpansionOverlay, applyFinesseATN, generateExpandedImage } from './lib/finesseDetection';
 
 export default function AppPMT() {
-  // ── Etat general — DTF uniquement ──
-  const productMode = 'DTF'; // fixé
+  // ── Etat general ──
+  const [productMode, setProductMode] = useState('DTF');
   const [selectedFormat, setSelectedFormat] = useState('A2');
   const [impositionMode, setImpositionMode] = useState('massicot');
   const [margin, setMargin] = useState(6);
@@ -30,7 +33,7 @@ export default function AppPMT() {
   const [errorAlert, setErrorAlert] = useState(null);
 
   // ── Finesse ──
-  const [finesse] = useState(0.1); // seuil fixé à 0.1 mm
+  const [finesse, setFinesse] = useState(0.1); // seuil réglable
   const [finesseFileId, setFinesseFileId] = useState(null); // fichier ouvert dans la modal
   const [lastAnalyzedFinesse, setLastAnalyzedFinesse] = useState(null); // seuil de la dernière analyse
   const [lastAnalyzedFileCount, setLastAnalyzedFileCount] = useState(0); // nb fichiers lors de la dernière analyse
@@ -69,6 +72,11 @@ export default function AppPMT() {
 
   const rawSheets = impositionHook.stats ? impositionHook.stats.totalSheets : 0;
   const totalExemplaires = rawSheets > 0 ? roundToMultiple(rawSheets, selectedFormat) : 0;
+  const table = PRIX_TABLES[productMode];
+  const cleanFormat = selectedFormat.replace('+', '');
+  const priceFormat = cleanFormat === 'M1' ? '1M' : cleanFormat;
+  const prixUnitaire = table && totalExemplaires > 0 ? getPrixUnitaire(priceFormat, totalExemplaires, table) : null;
+  const prixTotal = prixUnitaire ? Math.round(prixUnitaire * totalExemplaires * 100) / 100 : null;
   const currentSheet = impositionHook.sheets[impositionHook.currentSheetIndex] || null;
 
   // ── Finesse : fichier sélectionné pour la modal ──
@@ -96,6 +104,7 @@ export default function AppPMT() {
 
     const allCropped = filesHook.files.length > 0 && filesHook.files.every(f => f.cropped);
     const unanalyzed = filesHook.files.filter(f => f.cropped && !analyzedRef.current.has(f.id) && f.hasIssues === undefined);
+    console.log(`[finesse-auto] useEffect: ${filesHook.files.length} fichiers, allCropped=${allCropped}, unanalyzed=${unanalyzed.length}, analyzed=${analyzedRef.current.size}`);
     if (!allCropped || unanalyzed.length === 0) {
       // Plus rien à analyser — fermer l'overlay s'il était en attente
       if (allCropped && unanalyzed.length === 0 && filesHook.uploadStatus) {
@@ -118,6 +127,8 @@ export default function AppPMT() {
               ...ff,
               overlaySrc: result.overlay_url + '?t=' + Date.now(),
               pureDefectsSrc: result.pure_defects_url + '?t=' + Date.now(),
+              dilated4Src: result.dilated4_url ? result.dilated4_url + '?t=' + Date.now() : null,
+              contour7Src: result.contour7_url ? result.contour7_url + '?t=' + Date.now() : null,
               hasIssues: result.has_finesses,
               finessesPercent: result.finesses_percent,
             }));
@@ -178,6 +189,7 @@ export default function AppPMT() {
 
     // Si pas encore analysé, lancer l'analyse serveur
     if (f.hasIssues === undefined) {
+      filesHook.setUploadStatus({ step: 'Analyse des finesses...', fileName: f.name, current: 1, total: 1 });
       console.log(`[finesse] Analyse serveur pour ${f.name}, seuil=${finesse}mm`);
       try {
         const result = await analyzeFileServer(fileId);
@@ -193,6 +205,7 @@ export default function AppPMT() {
       } catch (err) {
         console.error('[finesse] Erreur analyse:', err);
       }
+      filesHook.setUploadStatus(null);
     }
 
     setFinesseFileId(fileId);
@@ -216,6 +229,8 @@ export default function AppPMT() {
         correctedSrc: result.corrected_url + '?t=' + ts,
         overlaySrc: result.overlay_url + '?t=' + ts,
         pureDefectsSrc: result.pure_defects_url + '?t=' + ts,
+        dilated4Src: result.dilated4_url ? result.dilated4_url + '?t=' + ts : null,
+        contour7Src: result.contour7_url ? result.contour7_url + '?t=' + ts : null,
         hasIssues: result.has_finesses,
         thumbnailUrl: result.thumbnail_url || ff.thumbnailUrl,
       }));
@@ -260,6 +275,8 @@ export default function AppPMT() {
         ...ff,
         overlaySrc: analyzeResult.overlay_url + '?t=' + Date.now(),
         pureDefectsSrc: analyzeResult.pure_defects_url + '?t=' + Date.now(),
+        dilated4Src: analyzeResult.dilated4_url ? analyzeResult.dilated4_url + '?t=' + Date.now() : null,
+        contour7Src: analyzeResult.contour7_url ? analyzeResult.contour7_url + '?t=' + Date.now() : null,
         hasIssues: analyzeResult.has_finesses,
       }));
     } catch (err) {
@@ -304,9 +321,6 @@ export default function AppPMT() {
     setFinesseFileId(null);
   };
 
-  // dummy setProductMode pour la sidebar (pas de changement de produit en DTF)
-  const setProductMode = () => {};
-
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-gray-200">
 
@@ -326,6 +340,7 @@ export default function AppPMT() {
       </svg>
 
       <SidebarDTF
+        productMode={productMode} setProductMode={setProductMode}
         selectedFormat={selectedFormat} setSelectedFormat={setSelectedFormat}
         formats={formats} margin={margin} setMargin={setMargin}
         impositionMode={impositionMode} setImpositionMode={setImpositionMode}
@@ -340,7 +355,7 @@ export default function AppPMT() {
         handleMonter={impositionHook.handleMonter} handleRemplir={impositionHook.handleRemplir}
         isCalculating={impositionHook.isCalculating}
         resetPlanche={resetPlanche}
-        finesse={finesse}
+        finesse={finesse} setFinesse={setFinesse}
         openFinesse={openFinesse} analyzeAllFinesse={analyzeAllFinesse}
         needsAnalysis={needsAnalysis} isAnalyzing={isAnalyzing}
       />
@@ -358,7 +373,7 @@ export default function AppPMT() {
         calcProgress={impositionHook.calcProgress}
         allowMove={allowMove} setSheets={impositionHook.setSheets}
         files={filesHook.files} stats={impositionHook.stats}
-        selectedFormat={selectedFormat} totalExemplaires={totalExemplaires}
+        selectedFormat={selectedFormat} totalExemplaires={totalExemplaires} prixTotal={prixTotal}
         showOptimalModal={impositionHook.showOptimalModal}
         setShowOptimalModal={impositionHook.setShowOptimalModal}
         setOptimalPanel={impositionHook.setOptimalPanel}
@@ -489,9 +504,39 @@ export default function AppPMT() {
         </div>
       )}
 
-      {/* ── Modal Finesse ── */}
-      {finesseFile && (
-        <FinesseModal
+      {/* ── Modal Finesse — selon le produit ── */}
+      {finesseFile && productMode === 'DTF' && (
+        <FinesseModal_DTF
+          file={finesseFile}
+          finesse={finesse}
+          onClose={closeFinesseModal}
+          onCorrectFinesse={handleCorrectFinesse}
+          onExpandBordure={handleExpandBordure}
+          onSave={handleSaveFinesse}
+        />
+      )}
+      {finesseFile && productMode === 'UV DTF' && (
+        <FinesseModal_UVDTF
+          file={finesseFile}
+          finesse={finesse}
+          onClose={closeFinesseModal}
+          onCorrectFinesse={handleCorrectFinesse}
+          onExpandBordure={handleExpandBordure}
+          onSave={handleSaveFinesse}
+        />
+      )}
+      {finesseFile && productMode === 'SeriQuadri' && (
+        <FinesseModal_Seri
+          file={finesseFile}
+          finesse={finesse}
+          onClose={closeFinesseModal}
+          onCorrectFinesse={handleCorrectFinesse}
+          onExpandBordure={handleExpandBordure}
+          onSave={handleSaveFinesse}
+        />
+      )}
+      {finesseFile && productMode === 'SeriLight' && (
+        <FinesseModal_SeriLight
           file={finesseFile}
           finesse={finesse}
           onClose={closeFinesseModal}

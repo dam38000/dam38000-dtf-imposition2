@@ -110,10 +110,16 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     const finFullPath = tmp('fin_full');
     im(`magick "${finPath}" -resize ${dims}! "${finFullPath}"`);
 
-    // Créer le fond vert puis composer avec l'alpha des finesses (évite les parenthèses shell)
+    // Sauvegarder le masque brut (non dilaté) pour la correction
+    const rawMaskPath = path.join(jobDir, `${prefix}_raw_mask.png`);
+    im(`magick "${finFullPath}" PNG32:"${rawMaskPath}"`);
+
+    // Dilater les finesses de 3px pour l'affichage (plus visible)
     const greenPath = tmp('green');
-    im(`magick "${finFullPath}" -fill "rgb(0,255,0)" -colorize 100 "${greenPath}"`);
-    im(`magick "${greenPath}" "${finFullPath}" -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
+    const finDilatedPath = tmp('fin_dilated');
+    im(`magick "${finFullPath}" -morphology Dilate Disk:3 "${finDilatedPath}"`);
+    im(`magick "${finDilatedPath}" -fill "rgb(0,255,0)" -colorize 100 "${greenPath}"`);
+    im(`magick "${greenPath}" "${finDilatedPath}" -compose CopyOpacity -composite PNG32:"${overlayPath}"`);
 
     // f) Panneau DROIT : même overlay
     fs.copyFileSync(overlayPath, pureDefectsPath);
@@ -129,8 +135,34 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
       }
     }
 
+    // h) Image dilatée 4px (pour SeriQuadri)
+    const dilated4Path = path.join(jobDir, `${prefix}_dilated4.png`);
+    // i) Contour rouge 20px (pour SeriLight)
+    const contour7Path = path.join(jobDir, `${prefix}_contour7.png`);
+    const tmpAlphaDil = tmp('alpha_dil');
+    const tmpAlphaDil4 = tmp('alpha_dilated4');
+    const tmpAlphaDil20 = tmp('alpha_dilated7');
+    const tmpRgbProp4 = tmp('rgb_prop4');
+    const tmpRedFill = tmp('red_fill');
+    try {
+      // Extraire l'alpha
+      im(`magick "${inputPath}" -alpha extract "${tmpAlphaDil}"`);
+      // Dilater 4px
+      im(`magick "${tmpAlphaDil}" -morphology Dilate Disk:4 "${tmpAlphaDil4}"`);
+      im(`magick "${inputPath}" -background white -alpha remove -negate -morphology Dilate Disk:4 -negate "${tmpRgbProp4}"`);
+      im(`magick "${tmpRgbProp4}" "${tmpAlphaDil4}" -compose CopyOpacity -composite "${inputPath}" -compose Over -composite PNG32:"${dilated4Path}"`);
+      console.log(`[Analyze] Image dilatée 4px: ${dilated4Path}`);
+      // Masque dilaté 7px : juste la forme élargie (blanc + alpha)
+      im(`magick "${tmpAlphaDil}" -morphology Dilate Disk:7 "${tmpAlphaDil20}"`);
+      im(`magick "${tmpAlphaDil20}" -fill white -colorize 100 "${tmpRedFill}"`);
+      im(`magick "${tmpRedFill}" "${tmpAlphaDil20}" -compose CopyOpacity -composite PNG32:"${contour7Path}"`);
+      console.log(`[Analyze] Masque dilaté 7px: ${contour7Path}`);
+    } catch (err) {
+      console.warn(`[Analyze] Erreur génération dilatées: ${err.message}`);
+    }
+
     // Nettoyage des fichiers temporaires
-    for (const f of [alphaPath, halfPath, openedPath, finPath, finFullPath, greenPath]) {
+    for (const f of [alphaPath, halfPath, openedPath, finPath, finFullPath, greenPath, finDilatedPath, tmpAlphaDil, tmpAlphaDil4, tmpAlphaDil20, tmpRgbProp4, tmpRedFill]) {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     }
 
@@ -138,6 +170,8 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
       has_finesses, finesses_percent,
       overlay_url: `/uploads/${fileId}/${prefix}_overlay.png`,
       pure_defects_url: `/uploads/${fileId}/${prefix}_pure_defects.png`,
+      dilated4_url: `/uploads/${fileId}/${prefix}_dilated4.png`,
+      contour7_url: `/uploads/${fileId}/${prefix}_contour7.png`,
       finesses_thumb_url: `/uploads/${fileId}/${prefix}_thumb.png`,
       threshold_mm: thresholdMm, radius_px: radius,
     };
@@ -145,6 +179,80 @@ function analyzeImage(jobDir, fileId, thresholdMm, prefix = 'finesses') {
     throw err;
   }
 }
+
+// ============================================================
+// POST /compose-border — Composer l'image originale avec la dilatation et la bordure
+// ============================================================
+router.post('/compose-border', (req, res) => {
+  const { file_id, border_opacity, dilated_opacity } = req.body;
+  if (!file_id) return res.status(400).json({ error: 'file_id requis' });
+
+  const jobDir = path.join(__dirname, '..', 'uploads', file_id);
+  const convertedPath = path.join(jobDir, 'converted.png');
+  const correctedPath = path.join(jobDir, 'corrected_preview.png');
+  const inputPath = fs.existsSync(correctedPath) ? correctedPath : convertedPath;
+  const dilatedPath = path.join(jobDir, 'finesses_dilated.png');
+  const composedPath = path.join(jobDir, 'composed_border.png');
+
+  if (!fs.existsSync(inputPath)) return res.status(404).json({ error: 'Image introuvable' });
+  if (!fs.existsSync(dilatedPath)) return res.status(404).json({ error: 'Image dilatée introuvable' });
+
+  const t = (name) => path.join(jobDir, `_tmp_compose_${name}.png`);
+
+  try {
+    const bOpacity = Math.max(0, Math.min(100, Math.round((border_opacity || 0) * 100)));
+    const dOpacity = Math.max(0, Math.min(100, Math.round((dilated_opacity || 0) * 100)));
+
+    console.log(`[Compose] border_opacity=${bOpacity}%, dilated_opacity=${dOpacity}%`);
+
+    // 1) Préparer l'image dilatée avec l'opacité du slider
+    if (dOpacity > 0) {
+      im(`magick "${dilatedPath}" -channel A -evaluate Multiply ${dOpacity / 100} +channel PNG32:"${t('dilated_opacity')}"`);
+    }
+
+    // 2) Créer le masque de bordure intérieure (érosion de l'alpha de 5px)
+    im(`magick "${inputPath}" -alpha extract "${t('alpha')}"`);
+    im(`magick "${t('alpha')}" -morphology Erode Disk:5 "${t('alpha_eroded')}"`);
+    // Bordure = alpha original - alpha érodé
+    im(`magick "${t('alpha')}" "${t('alpha_eroded')}" -compose Difference -composite "${t('border_mask')}"`);
+
+    // 3) Créer l'image originale avec la bordure rendue transparente
+    if (bOpacity > 0) {
+      // Réduire l'alpha dans la zone de bordure
+      // border_mask * border_opacity = quantité d'alpha à retirer
+      im(`magick "${t('border_mask')}" -channel A -evaluate Multiply ${bOpacity / 100} +channel "${t('border_scaled')}"`);
+      // Alpha final = alpha original - border_scaled (clamped à 0)
+      im(`magick "${t('alpha')}" "${t('border_scaled')}" -compose Minus -composite -clamp "${t('alpha_final')}"`);
+      // Appliquer le nouvel alpha à l'image originale
+      im(`magick "${inputPath}" "${t('alpha_final')}" -compose CopyOpacity -composite PNG32:"${t('original_bordered')}"`);
+    } else {
+      im(`magick "${inputPath}" PNG32:"${t('original_bordered')}"`);
+    }
+
+    // 4) Composer : dilatée (dessous) + originale avec bordure (dessus)
+    if (dOpacity > 0) {
+      im(`magick "${t('dilated_opacity')}" "${t('original_bordered')}" -compose Over -composite PNG32:"${composedPath}"`);
+    } else {
+      im(`magick "${t('original_bordered')}" PNG32:"${composedPath}"`);
+    }
+
+    console.log(`[Compose] OK → ${composedPath}`);
+
+    // Nettoyage temporaires
+    for (const name of ['dilated_opacity', 'alpha', 'alpha_eroded', 'border_mask', 'border_scaled', 'alpha_final', 'original_bordered']) {
+      const f = t(name);
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+
+    res.json({
+      composed_url: `/uploads/${file_id}/composed_border.png`,
+      message: 'Composition réussie',
+    });
+  } catch (err) {
+    console.error('[Compose]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ============================================================
 // POST /finesses — Analyse principale
@@ -200,14 +308,14 @@ router.post('/correct-finesses', (req, res) => {
     // 1) Extraire l'alpha original
     im(`magick "${inputPath}" -alpha extract "${t('alpha')}"`);
 
-    // 2) Récupérer le masque des finesses (overlay vert → extraire l'alpha = zones détectées)
-    const overlayPath = path.join(jobDir, 'finesses_overlay.png');
-    if (!fs.existsSync(overlayPath)) {
-      // Si l'overlay n'existe pas encore, lancer l'analyse d'abord
+    // 2) Récupérer le masque brut des finesses (non dilaté, pour une correction précise)
+    const rawMaskPath = path.join(jobDir, 'finesses_raw_mask.png');
+    if (!fs.existsSync(rawMaskPath)) {
+      // Si le masque n'existe pas encore, lancer l'analyse d'abord
       analyzeImage(jobDir, file_id, threshold_mm, 'finesses');
     }
-    // Extraire l'alpha de l'overlay = masque binaire des finesses
-    im(`magick "${overlayPath}" -alpha extract "${t('finesse_mask')}"`);
+    // Utiliser le masque brut (pas l'overlay dilaté)
+    im(`magick "${rawMaskPath}" "${t('finesse_mask')}"`);
     // Dilater le masque pour couvrir la zone de correction autour des finesses
     im(`magick "${t('finesse_mask')}" -morphology Dilate Disk:${maskDilateRadius} "${t('zone_mask')}"`);
 
@@ -350,24 +458,30 @@ router.post('/correct-reserves', (req, res) => {
 // POST /save-correction — Rendre la correction permanente
 // ============================================================
 router.post('/save-correction', async (req, res) => {
-  const { file_id } = req.body;
+  const { file_id, source } = req.body;
   if (!file_id) return res.status(400).json({ error: 'file_id requis' });
 
   const jobDir = path.join(__dirname, '..', 'uploads', file_id);
   const correctedPath = path.join(jobDir, 'corrected_preview.png');
+  const composedPath = path.join(jobDir, 'composed_border.png');
   const convertedPath = path.join(jobDir, 'converted.png');
   const thumbnailPath = path.join(jobDir, 'thumbnail.png');
 
-  if (!fs.existsSync(correctedPath)) {
+  // Choisir la source : composé, corrigé, ou erreur
+  const sourcePath = source === 'composed' && fs.existsSync(composedPath) ? composedPath
+    : fs.existsSync(correctedPath) ? correctedPath : null;
+
+  if (!sourcePath) {
     return res.status(404).json({ error: 'Pas de correction à sauvegarder' });
   }
 
   try {
-    fs.copyFileSync(correctedPath, convertedPath);
+    fs.copyFileSync(sourcePath, convertedPath);
     // Regénérer le thumbnail à 50% de converted (= taille réelle à 150 DPI)
     im(`magick "${convertedPath}" -resize 50% -density 150 PNG32:"${thumbnailPath}"`);
-    console.log(`[Save Correction] Thumbnail regénéré à 50% de converted.png`);
+    console.log(`[Save Correction] Source: ${path.basename(sourcePath)} → converted.png`);
     try { fs.unlinkSync(correctedPath); } catch {}
+    try { fs.unlinkSync(composedPath); } catch {}
     for (const f of ['corrected_overlay.png', 'corrected_pure_defects.png', 'corrected_thumb.png']) {
       try { fs.unlinkSync(path.join(jobDir, f)); } catch {}
     }

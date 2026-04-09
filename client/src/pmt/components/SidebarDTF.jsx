@@ -3,8 +3,10 @@
 // ============================================================
 
 import { Icons } from './Icons';
+import { PRODUCT_FORMATS } from '../lib/constants';
 
 export function SidebarDTF({
+  productMode, setProductMode,
   selectedFormat, setSelectedFormat,
   formats, margin, setMargin,
   impositionMode, setImpositionMode,
@@ -15,16 +17,26 @@ export function SidebarDTF({
   updateDimension, cropFile, cropAll, removeFile, clearAll,
   handleMonter, handleRemplir, isCalculating,
   resetPlanche,
-  finesse, openFinesse, analyzeAllFinesse,
+  finesse, setFinesse, openFinesse, analyzeAllFinesse,
   needsAnalysis, isAnalyzing,
 }) {
   return (
     <aside className="w-[420px] bg-white border-r border-gray-300 flex flex-col shadow-lg z-10 flex-shrink-0">
 
-      {/* ── Header vert — DTF uniquement ── */}
+      {/* ── Header vert — avec sélection produit ── */}
       <div className="p-4 bg-green-700 text-white text-center flex-shrink-0">
-        <h1 className="text-lg font-bold uppercase tracking-wider">Montage DTF</h1>
-        <h2 className="text-xl font-bold text-white mt-1">by Printmytransfer</h2>
+        <h1 className="text-lg font-bold uppercase tracking-wider">Montage et Correction</h1>
+        <h1 className="text-lg font-bold uppercase tracking-wider">Automatique</h1>
+        <h2 className="text-sm font-bold text-white mt-1">by Printmytransfer.fr</h2>
+        <div className="mt-2 flex justify-center gap-1">
+          {Object.keys(PRODUCT_FORMATS).map(m => (
+            <button key={m} onClick={() => { setProductMode(m); setSelectedFormat(Object.keys(PRODUCT_FORMATS[m])[0]); resetPlanche(); }}
+              className={`px-2 py-1 rounded text-[10px] font-bold transition-all
+                ${productMode === m ? 'bg-white text-green-800 shadow' : 'bg-green-600 text-white hover:bg-green-500'}`}>
+              {m}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Parametres feuille ── */}
@@ -50,6 +62,13 @@ export function SidebarDTF({
                 ${isAnalyzing ? 'bg-orange-400 text-white animate-pulse cursor-wait' : needsAnalysis ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
               {isAnalyzing ? 'Analyse...' : 'Analyser finesses'}
             </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-gray-600 w-16">Finesse</span>
+            <input type="range" min="0.05" max="0.5" step="0.05" value={finesse}
+              onChange={e => setFinesse(parseFloat(e.target.value))}
+              className="w-24 accent-orange-500 flex-shrink-0" />
+            <span className="text-xs font-bold text-gray-700 w-12 text-right flex-shrink-0">{finesse} mm</span>
           </div>
         </div>
       </div>
