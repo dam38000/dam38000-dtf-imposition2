@@ -191,7 +191,7 @@ router.post('/compose-border', (req, res) => {
   const convertedPath = path.join(jobDir, 'converted.png');
   const correctedPath = path.join(jobDir, 'corrected_preview.png');
   const inputPath = fs.existsSync(correctedPath) ? correctedPath : convertedPath;
-  const dilatedPath = path.join(jobDir, 'finesses_dilated.png');
+  const dilatedPath = path.join(jobDir, 'finesses_dilated4.png');
   const composedPath = path.join(jobDir, 'composed_border.png');
 
   if (!fs.existsSync(inputPath)) return res.status(404).json({ error: 'Image introuvable' });
@@ -229,8 +229,12 @@ router.post('/compose-border', (req, res) => {
       im(`magick "${inputPath}" PNG32:"${t('original_bordered')}"`);
     }
 
-    // 4) Composer : dilatée (dessous) + originale avec bordure (dessus)
-    if (dOpacity > 0) {
+    // 4) Composer : dilatée comme base (c'est le dessin élargi = ce que le client voit)
+    if (dOpacity > 0 && dOpacity >= 100) {
+      // Opacité 100% : utiliser directement l'image dilatée (= dessin élargi complet)
+      im(`magick "${dilatedPath}" PNG32:"${composedPath}"`);
+    } else if (dOpacity > 0) {
+      // Opacité partielle : mélanger dilatée et originale
       im(`magick "${t('dilated_opacity')}" "${t('original_bordered')}" -compose Over -composite PNG32:"${composedPath}"`);
     } else {
       im(`magick "${t('original_bordered')}" PNG32:"${composedPath}"`);
@@ -250,6 +254,74 @@ router.post('/compose-border', (req, res) => {
     });
   } catch (err) {
     console.error('[Compose]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// POST /compose-serilight — Composer : contour 7px couleur + dilaté 4px + original
+// ============================================================
+router.post('/compose-serilight', (req, res) => {
+  const { file_id, contour_color, show_contour, dilated_opacity } = req.body;
+  if (!file_id) return res.status(400).json({ error: 'file_id requis' });
+
+  const jobDir = path.join(__dirname, '..', 'uploads', file_id);
+  const convertedPath = path.join(jobDir, 'converted.png');
+  const dilated4Path = path.join(jobDir, 'finesses_dilated4.png');
+  const contour7Path = path.join(jobDir, 'finesses_contour7.png');
+  const composedPath = path.join(jobDir, 'composed_border.png');
+
+  if (!fs.existsSync(convertedPath)) return res.status(404).json({ error: 'Image introuvable' });
+
+  const t = (name) => path.join(jobDir, `_tmp_compose_sl_${name}.png`);
+
+  try {
+    console.log(`[Compose SeriLight] contour=${contour_color} show=${show_contour} dilated=${dilated_opacity}`);
+
+    // Base : image dilatée 4px (si opacity > 0) ou original
+    let basePath;
+    if (dilated_opacity >= 1 && fs.existsSync(dilated4Path)) {
+      basePath = dilated4Path;
+    } else {
+      basePath = convertedPath;
+    }
+
+    // Si contour activé : créer contour coloré 7px sous la base
+    if (show_contour && contour_color && fs.existsSync(contour7Path)) {
+      // 1) Créer une image plein couleur de la taille du contour7
+      const r = parseInt(contour_color.slice(1,3), 16);
+      const g = parseInt(contour_color.slice(3,5), 16);
+      const b = parseInt(contour_color.slice(5,7), 16);
+      // Obtenir dimensions
+      const dims = im(`magick identify -format "%wx%h" "${contour7Path}"`).trim();
+      // Créer un rectangle plein de la couleur
+      im(`magick -size ${dims} xc:"rgb(${r},${g},${b})" "${t('color_full')}"`);
+      // 2) Extraire l'alpha du contour7 pour l'appliquer à l'image couleur
+      im(`magick "${contour7Path}" -alpha extract "${t('contour_alpha')}"`);
+      // 3) Appliquer l'alpha : couleur + alpha → image contour coloré
+      im(`magick "${t('color_full')}" "${t('contour_alpha')}" -compose CopyOpacity -composite PNG32:"${t('contour_final')}"`);
+      // 4) Composer : contour coloré (dessous) + base dilatée (dessus)
+      im(`magick "${t('contour_final')}" "${basePath}" -compose Over -composite PNG32:"${composedPath}"`);
+      console.log(`[Compose SeriLight] Contour ${contour_color} + base ${path.basename(basePath)}`);
+    } else {
+      // Pas de contour : juste la base
+      im(`magick "${basePath}" PNG32:"${composedPath}"`);
+    }
+
+    console.log(`[Compose SeriLight] OK → ${composedPath}`);
+
+    // Nettoyage
+    for (const name of ['contour_colored', 'contour_final', 'color_full', 'contour_alpha']) {
+      const f = t(name);
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+
+    res.json({
+      composed_url: `/uploads/${file_id}/composed_border.png`,
+      message: 'Composition SeriLight réussie',
+    });
+  } catch (err) {
+    console.error('[Compose SeriLight]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

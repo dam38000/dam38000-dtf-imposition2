@@ -466,8 +466,8 @@ export default function AppPMT() {
       {impositionHook.variantsChooser && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
-            <h3 className="text-lg font-bold text-green-600 mb-3">
-              {impositionHook.variantsChooser.variants.length} variante{impositionHook.variantsChooser.variants.length > 1 ? 's' : ''} trouvée{impositionHook.variantsChooser.variants.length > 1 ? 's' : ''}
+            <h3 className={`text-lg font-bold mb-3 ${impositionHook.variantsChooser.variants.length > 1 ? 'text-green-600' : 'text-orange-600'}`}>
+              {impositionHook.variantsChooser.variants.length - 1} variante{(impositionHook.variantsChooser.variants.length - 1) > 1 ? 's' : ''} trouvée{(impositionHook.variantsChooser.variants.length - 1) > 1 ? 's' : ''}
             </h3>
             {impositionHook.variantsChooser.variants.length > 1 && (
               <div className="flex items-center justify-center gap-4 mb-4">
@@ -533,6 +533,7 @@ export default function AppPMT() {
           onCorrectFinesse={handleCorrectFinesse}
           onExpandBordure={handleExpandBordure}
           onSave={handleSaveFinesse}
+          setFiles={filesHook.setFiles}
         />
       )}
       {finesseFile && productMode === 'SeriLight' && (
@@ -543,6 +544,7 @@ export default function AppPMT() {
           onCorrectFinesse={handleCorrectFinesse}
           onExpandBordure={handleExpandBordure}
           onSave={handleSaveFinesse}
+          setFiles={filesHook.setFiles}
         />
       )}
     </div>

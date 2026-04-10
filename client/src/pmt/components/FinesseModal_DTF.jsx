@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Icons } from './Icons';
+import { HexColorPicker } from 'react-colorful';
 
 // ── Conversion HSV ↔ Hex (color picker style Photoshop) ──
 function hexToHsv(hex) {
@@ -392,6 +393,10 @@ export default function FinesseModal_DTF({ file, finesse, onClose, onCorrectFine
 
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
+            <span className="text-3xl font-bold text-gray-400 tracking-widest uppercase px-3">DTF</span>
+
+            <div className="w-px h-7 bg-gray-200 mx-1" />
+
             {/* Groupe Actions finesses */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
               <button
@@ -676,7 +681,7 @@ export default function FinesseModal_DTF({ file, finesse, onClose, onCorrectFine
         </div>
       </div>
 
-      {/* Modale color picker — style Photoshop */}
+      {/* Modale color picker — react-colorful */}
       {hslEditor && (() => {
         const currentHex = hsvToHex(hslEditor.h, hslEditor.s, hslEditor.v);
         return (
@@ -705,46 +710,16 @@ export default function FinesseModal_DTF({ file, finesse, onClose, onCorrectFine
                   className="px-3 py-1 rounded text-xs font-bold text-white bg-red-400 hover:bg-red-500">✕</button>
               </div>
             </div>
-            {/* Rectangle 2D : X=saturation, Y=luminosité (value) */}
-            <div
-              ref={areaRef}
-              className="relative w-full rounded cursor-crosshair select-none"
-              style={{
-                height: 180,
-                backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                backgroundImage: 'linear-gradient(to right, #fff, transparent), linear-gradient(to top, #000, transparent)',
+            {/* Color picker */}
+            <HexColorPicker
+              color={currentHex}
+              onChange={(hex) => {
+                const { h, s, v } = hexToHsv(hex);
+                setHslEditor(prev => ({ ...prev, h, s, v }));
+                setBgColor(hex);
               }}
-              onPointerDown={e => { areaDragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleAreaPointer(e); }}
-              onPointerMove={e => { if (areaDragging.current) handleAreaPointer(e); }}
-              onPointerUp={() => { areaDragging.current = false; }}
-            >
-              {/* Curseur rond */}
-              <div className="absolute w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${hslEditor.s}% - 8px)`,
-                  top: `calc(${100 - hslEditor.v}% - 8px)`,
-                  backgroundColor: currentHex,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
-            {/* Slider teinte horizontal */}
-            <div className="relative h-4 rounded-full mt-3"
-              style={{ background: 'linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))' }}>
-              <input type="range" min="0" max="360" step="1"
-                value={hslEditor.h}
-                onChange={e => {
-                  const updated = { ...hslEditor, h: parseInt(e.target.value) };
-                  setHslEditor(updated);
-                  setBgColor(hsvToHex(updated.h, updated.s, updated.v));
-                }}
-                className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
-              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${(hslEditor.h/360)*100}% - 8px)`,
-                  backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
+              style={{ width: '100%' }}
+            />
           </div>
         </div>
         );

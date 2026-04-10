@@ -83,7 +83,7 @@ export async function searchVariants({ files, sheetSize, margin, impositionMode,
         const fixedRes = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
         if (fixedRes.length === sheetItems.length) {
           const rescaled = fixedRes.map(pi => ({ ...pi, x: pi.x / IMB_SCALE - safeMargin / 2, y: pi.y / IMB_SCALE - safeMargin / 2 }));
-          const isDupe = allVariants.some(v => v.items.length === rescaled.length && v.items.every((it, i) => Math.abs(it.x - rescaled[i].x) < 0.5 && Math.abs(it.y - rescaled[i].y) < 0.5));
+          const isDupe = allVariants.some(v => v.items.length === rescaled.length && v.items.every((it, i) => Math.abs(it.x - rescaled[i].x) < 0.5 && Math.abs(it.y - rescaled[i].y) < 0.5 && !!it.rotated === !!rescaled[i].rotated));
           if (!isDupe) allVariants.push({ items: rescaled, label: `Variante ${allVariants.length + 1}` });
         }
       }
@@ -117,7 +117,7 @@ export async function searchVariants({ files, sheetSize, margin, impositionMode,
           res = res.map(it => it._prerotated ? { ...it, rotated: !it.rotated, realW: it.realH, realH: it.realW } : it);
           if (isMassiMode) res = res.map(it => ({ ...it, x: it.x - safeMargin, y: it.y - safeMargin }));
           if (res.length === sheetItems.length) {
-            const isDupe = allVariants.some(v => v.items.length === res.length && v.items.every((vi, idx) => Math.abs(vi.x - res[idx].x) < 0.01 && Math.abs(vi.y - res[idx].y) < 0.01));
+            const isDupe = allVariants.some(v => v.items.length === res.length && v.items.every((vi, idx) => Math.abs(vi.x - res[idx].x) < 0.01 && Math.abs(vi.y - res[idx].y) < 0.01 && !!vi.rotated === !!res[idx].rotated));
             if (!isDupe) allVariants.push({ items: res, label: `Variante ${allVariants.length + 1}` });
           }
         }

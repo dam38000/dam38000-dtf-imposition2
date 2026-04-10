@@ -302,13 +302,9 @@ export function useImposition({ files, setFiles, productMode, selectedFormat, se
         stopRef: calcStopRef,
         onProgress: (msg) => setCalcProgress(msg),
       });
-      if (variants.length > 1) {
-        const mappedVariants = variants.map((v, i) => ({ items: v.items, label: v.label || `Variante ${i + 1}` }));
-        setVariantsChooser({ variants: mappedVariants, runs, currentIdx: 0, searching: false });
-      } else {
-        setCalcProgress('Aucune variante trouvée');
-        setTimeout(() => setCalcProgress(''), 2000);
-      }
+      // Afficher le chooser dans tous les cas (même avec 0 variante supplémentaire)
+      const mappedVariants = variants.map((v, i) => ({ items: v.items, label: v.label || `Variante ${i + 1}` }));
+      setVariantsChooser({ variants: mappedVariants, runs, currentIdx: 0, searching: false });
     } catch (err) {
       console.error('Erreur recherche variantes:', err);
     } finally {

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Icons } from './Icons';
+import { HexColorPicker } from 'react-colorful';
 
 // ── Conversion HSV ↔ Hex (color picker style Photoshop) ──
 function hexToHsv(hex) {
@@ -33,18 +34,21 @@ const SCREEN_DPI = 96;
 const IMAGE_DPI = 300;
 const SCALE_REAL = SCREEN_DPI / IMAGE_DPI; // ~0.32 = taille réelle
 
-export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
+export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave, setFiles }) {
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1); // 1 = taille réelle, 2 = x2
   const correctionIntensity = 1.3; // intensité fixe
   const [showConfirm, setShowConfirm] = useState(false);
-  const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
+  const [bgColor, setBgColor] = useState('#d2d2d2'); // fond du panneau gauche (gris clair L≈210 pour tissu clair par défaut)
   const [borderOverlaySrc, setBorderOverlaySrc] = useState(null);
   const [borderOpacity, setBorderOpacity] = useState(0);
   const [dilatedOpacity, setDilatedOpacity] = useState(0);
   const [tissuMode, setTissuMode] = useState('clair'); // 'clair' | 'fonce' | null (manuel)
+  const [showIntroPopup, setShowIntroPopup] = useState(() => !localStorage.getItem('seri_intro_dismissed'));
+  const [introUnderstood, setIntroUnderstood] = useState(false);
+  const [introDontShow, setIntroDontShow] = useState(false);
   const BORDER_WIDTH = 5; // px
   const [bgMode, setBgMode] = useState('plain'); // 'texture' | 'custom' | 'plain'
   const [customBgData, setCustomBgData] = useState(() => localStorage.getItem('seri_finesse_custom_bg') || null);
@@ -165,7 +169,7 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
       setDilatedOpacity(0);
     } else if (tissuMode === 'fonce') {
       setBorderOpacity(0);
-      setDilatedOpacity(L < 200 ? 0 : 1);
+      setDilatedOpacity(1);
     }
   }, [bgColor, tissuMode]);
 
@@ -423,36 +427,51 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
   // Fermeture : si modifié (correction ou bordure/dilatation), afficher le dialogue
   const hasBorderChanges = (borderOpacity > 0 || dilatedOpacity > 0) && file.dilated4Src;
   const handleRequestClose = () => {
-    if (file.correctedSrc || hasBorderChanges) {
-      setShowConfirm(true);
-    } else {
-      onClose(false);
-    }
+    setShowConfirm(true);
   };
 
   const handleConfirmSave = async () => {
     setShowConfirm(false);
     setIsSaving(true);
     startTimer('Enregistrement en cours');
+    console.log('[Seri Save] tissuMode=', tissuMode, 'hasBorderChanges=', hasBorderChanges, 'borderOpacity=', borderOpacity, 'dilatedOpacity=', dilatedOpacity, 'correctedSrc=', !!file.correctedSrc, 'dilated4Src=', !!file.dilated4Src);
     try {
       // 1) Si correction finesses, sauvegarder d'abord
       if (file.correctedSrc) {
+        console.log('[Seri Save] Sauvegarde correction finesses...');
         await onSave(file.id);
       }
       // 2) Si bordure/dilatation modifiées, composer puis sauvegarder
       if (hasBorderChanges) {
+        console.log('[Seri Save] Composition bordure/dilatation...');
+        console.log('[Seri Save] Envoi compose-border...');
         const resp = await fetch('/api/analyze/compose-border', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ file_id: file.id, border_opacity: borderOpacity, dilated_opacity: dilatedOpacity }),
         });
+        console.log('[Seri Save] compose-border status=', resp.status);
+        const respText = await resp.text();
+        console.log('[Seri Save] compose-border response=', respText);
         if (resp.ok) {
-          // Sauvegarder le composé
-          await fetch('/api/analyze/save-correction', {
+          // Sauvegarder le composé côté serveur
+          console.log('[Seri Save] Sauvegarde composé...');
+          const saveResp = await fetch('/api/analyze/save-correction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_id: file.id, source: 'composed' }),
           });
+          console.log('[Seri Save] save-correction status=', saveResp.status);
+          // Rafraîchir la thumbnail et l'image côté client (cache-busting)
+          if (setFiles) {
+            const ts = Date.now();
+            setFiles(prev => prev.map(ff => ff.id !== file.id ? ff : {
+              ...ff,
+              correctedSrc: null,
+              corrected: true,
+              thumbnailUrl: `/uploads/${file.id}/thumbnail.png?t=${ts}`,
+            }));
+          }
         }
       }
     } catch (err) {
@@ -498,7 +517,8 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
 
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
-            {/* Groupe Actions finesses */}
+            <span className="text-3xl font-bold text-gray-400 tracking-widest uppercase px-3">SeriQuadri</span>
+
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
             {/* Slider bordure intérieure */}
@@ -527,11 +547,11 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
               const L = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
               return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${L > 128 ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-700 text-white'}`}>L={L}</span>;
             })()}
-            <button onClick={() => setTissuMode(tissuMode === 'clair' ? null : 'clair')}
+            <button onClick={() => { setTissuMode('clair'); setBgColor('#d2d2d2'); setBgMode('plain'); }}
               className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${tissuMode === 'clair' ? 'bg-yellow-300 text-yellow-900 border-yellow-500 ring-2 ring-yellow-400' : 'bg-yellow-100 text-yellow-800 border-yellow-300 hover:bg-yellow-200'}`}>
               Version tissu clair
             </button>
-            <button onClick={() => setTissuMode(tissuMode === 'fonce' ? null : 'fonce')}
+            <button onClick={() => { setTissuMode('fonce'); setBgColor('#9ca3af'); setBgMode('plain'); }}
               className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${tissuMode === 'fonce' ? 'bg-gray-900 text-white border-blue-500 ring-2 ring-blue-400' : 'bg-gray-700 text-white border-gray-600 hover:bg-gray-800'}`}>
               Version tissu foncé
             </button>
@@ -566,8 +586,8 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
           {/* Texte mode tissu — superposé en haut des panneaux */}
           {tissuMode && (
             <div className="absolute top-4 left-0 right-0 z-40 flex justify-center pointer-events-none">
-              <span className={`text-[22px] font-bold italic px-6 py-1 rounded-lg shadow-lg ${tissuMode === 'clair' ? 'text-yellow-800 bg-yellow-100/90' : 'text-blue-200 bg-gray-800/90'}`}>
-                {tissuMode === 'clair' ? 'dessin modifié pour tissus clairs' : 'dessin modifié pour tissus foncés'}
+              <span className={`text-[18px] font-bold italic px-6 py-1 rounded-lg shadow-lg ${tissuMode === 'clair' ? 'text-yellow-800 bg-yellow-100/90' : 'text-blue-200 bg-gray-800/90'}`}>
+                {tissuMode === 'clair' ? "Vous avez choisi de traiter le dessin en mode \"tissu clair\", vous pouvez voir le rendu du dessin en changeant la couleur du fond" : "Vous avez choisi de traiter le dessin en mode \"tissu foncé\", vous pouvez voir le rendu du dessin en changeant la couleur du fond"}
               </span>
             </div>
           )}
@@ -712,8 +732,14 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
-                {/* Image dilatée (sous l'originale) */}
-                {file.dilated4Src && dilatedOpacity > 0 && (
+                {/* Image dilatée (sous l'originale) — masquée en mode foncé si luminance <= 200 */}
+                {file.dilated4Src && dilatedOpacity > 0 && (() => {
+                  if (tissuMode === 'fonce') {
+                    const bgR = parseInt(bgColor.slice(1,3),16), bgG = parseInt(bgColor.slice(3,5),16), bgB = parseInt(bgColor.slice(5,7),16);
+                    const bgL = Math.round(0.299 * bgR + 0.587 * bgG + 0.114 * bgB);
+                    if (bgL <= 200) return null;
+                  }
+                  return (
                   <img
                     src={file.dilated4Src}
                     alt="Dilaté"
@@ -724,7 +750,8 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
                       opacity: dilatedOpacity,
                     }}
                   />
-                )}
+                  );
+                })()}
                 <img
                   src={file.correctedSrc || `/uploads/${file.id}/converted.png`}
                   alt="Original"
@@ -742,7 +769,13 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
                     style={{}}
                   />
                 )}
-                {borderOverlaySrc && borderOpacity > 0 && (
+                {borderOverlaySrc && borderOpacity > 0 && (() => {
+                  if (tissuMode === 'fonce') {
+                    const bgR = parseInt(bgColor.slice(1,3),16), bgG = parseInt(bgColor.slice(3,5),16), bgB = parseInt(bgColor.slice(5,7),16);
+                    const bgL = Math.round(0.299 * bgR + 0.587 * bgG + 0.114 * bgB);
+                    if (bgL <= 200) return null;
+                  }
+                  return (
                   <div
                     style={{
                       width: '100%',
@@ -761,7 +794,8 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
                       maskSize: '100% 100%',
                     }}
                   />
-                )}
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -847,7 +881,7 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
         </div>
       </div>
 
-      {/* Modale color picker — style Photoshop */}
+      {/* Modale color picker — react-colorful */}
       {hslEditor && (() => {
         const currentHex = hsvToHex(hslEditor.h, hslEditor.s, hslEditor.v);
         return (
@@ -876,50 +910,63 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
                   className="px-3 py-1 rounded text-xs font-bold text-white bg-red-400 hover:bg-red-500">✕</button>
               </div>
             </div>
-            {/* Rectangle 2D : X=saturation, Y=luminosité (value) */}
-            <div
-              ref={areaRef}
-              className="relative w-full rounded cursor-crosshair select-none"
-              style={{
-                height: 180,
-                backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                backgroundImage: 'linear-gradient(to right, #fff, transparent), linear-gradient(to top, #000, transparent)',
+            {/* Color picker */}
+            <HexColorPicker
+              color={currentHex}
+              onChange={(hex) => {
+                const { h, s, v } = hexToHsv(hex);
+                setHslEditor(prev => ({ ...prev, h, s, v }));
+                setBgColor(hex);
               }}
-              onPointerDown={e => { areaDragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleAreaPointer(e); }}
-              onPointerMove={e => { if (areaDragging.current) handleAreaPointer(e); }}
-              onPointerUp={() => { areaDragging.current = false; }}
-            >
-              {/* Curseur rond */}
-              <div className="absolute w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${hslEditor.s}% - 8px)`,
-                  top: `calc(${100 - hslEditor.v}% - 8px)`,
-                  backgroundColor: currentHex,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
-            {/* Slider teinte horizontal */}
-            <div className="relative h-4 rounded-full mt-3"
-              style={{ background: 'linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))' }}>
-              <input type="range" min="0" max="360" step="1"
-                value={hslEditor.h}
-                onChange={e => {
-                  const updated = { ...hslEditor, h: parseInt(e.target.value) };
-                  setHslEditor(updated);
-                  setBgColor(hsvToHex(updated.h, updated.s, updated.v));
-                }}
-                className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
-              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${(hslEditor.h/360)*100}% - 8px)`,
-                  backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
+              style={{ width: '100%' }}
+            />
           </div>
         </div>
         );
       })()}
+
+      {/* Popup explicatif à l'ouverture */}
+      {showIntroPopup && (
+        <div className="fixed top-1/2 right-0 -translate-y-1/2 z-[60] w-[45vw] flex justify-center pr-8">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-lg border-2 border-blue-300"
+            onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-blue-700 mb-3">Information</h3>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>Si votre dessin présente des traits inférieurs à 1mm, vous pouvez avoir intérêt à spécifier la couleur de votre tissu pour améliorer le rendu.</p>
+              <p>Le dessin sera légèrement modifié pour s'adapter à la couleur du tissu sur lequel vous allez le poser.</p>
+              <p>Si votre tissu est clair, cliquez le bouton <span className="font-bold text-yellow-700">"Version tissu clair"</span>, sinon cliquez <span className="font-bold text-gray-300 bg-gray-700 px-1 rounded">"Version tissu foncé"</span>.</p>
+              <p>Après, vous pouvez examiner le rendu visuel que vous aurez en choisissant les couleurs du fond parmi les patchs à gauche.</p>
+              <p>La version non modifiée du dessin est la version <span className="font-bold">"tissu clair"</span>.</p>
+              <p>La version <span className="font-bold">"tissu foncé"</span> épaissit les traits fins pour avoir un meilleur rendu.</p>
+              <p>Si vous avez des tissus de plusieurs couleurs, choisissez plutôt la version <span className="font-bold">"tissu foncé"</span>.</p>
+              <p>Dans tous les cas, vérifiez le rendu en changeant la couleur du fond.</p>
+              <p className="text-red-600 font-semibold">Quand vous enregistrerez le dessin, vous acceptez le BAT et le choix que vous avez fait.</p>
+            </div>
+            <div className="space-y-2 mb-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={introUnderstood} onChange={e => setIntroUnderstood(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600" />
+                <span className="text-sm font-bold text-gray-700">J'ai compris</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={introDontShow} onChange={e => setIntroDontShow(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600" />
+                <span className="text-sm text-gray-500">Ne plus me montrer ce message</span>
+              </label>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (introDontShow) localStorage.setItem('seri_intro_dismissed', '1');
+                setShowIntroPopup(false);
+              }}
+              disabled={!introUnderstood}
+              className={`w-full py-2 rounded-lg font-bold text-sm transition-colors ${introUnderstood ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+              Fermer
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Dialogue de confirmation à la fermeture */}
       {showConfirm && (
@@ -928,9 +975,11 @@ export default function FinesseModal_Seri({ file, finesse, onClose, onCorrectFin
           onClick={(e) => e.stopPropagation()}
         >
           <div className="bg-white rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4">
-            <h4 className="font-bold text-lg text-gray-800 mb-2">Image modifiée</h4>
+            <h4 className="font-bold text-lg text-gray-800 mb-2">
+              {tissuMode === 'fonce' ? 'Vous avez choisi de poser le dessin sur du tissu foncé' : 'Vous avez choisi de poser le dessin sur du tissu clair'}
+            </h4>
             <p className="text-sm text-gray-600 mb-6">
-              L'image a été corrigée. Voulez-vous enregistrer les modifications ?
+              Voulez-vous enregistrer les modifications ?
             </p>
             <div className="flex gap-3 justify-end">
               <button

@@ -63,13 +63,7 @@ export function SidebarDTF({
               {isAnalyzing ? 'Analyse...' : 'Analyser finesses'}
             </button>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-gray-600 w-16">Finesse</span>
-            <input type="range" min="0.05" max="0.5" step="0.05" value={finesse}
-              onChange={e => setFinesse(parseFloat(e.target.value))}
-              className="w-24 accent-orange-500 flex-shrink-0" />
-            <span className="text-xs font-bold text-gray-700 w-12 text-right flex-shrink-0">{finesse} mm</span>
-          </div>
+          {/* Slider finesse masqué */}
         </div>
       </div>
 

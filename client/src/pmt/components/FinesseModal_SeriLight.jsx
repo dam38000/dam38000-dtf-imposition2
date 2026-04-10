@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { HexColorPicker } from 'react-colorful';
 import { Icons } from './Icons';
 
 // ── Conversion HSV ↔ Hex (color picker style Photoshop) ──
@@ -20,7 +21,7 @@ function hsvToHex(h, s, v) {
   let r,g,b;
   if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}else if(h<180){r=0;g=c;b=x;}
   else if(h<240){r=0;g=x;b=c;}else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
-  const hex2=v=>Math.round((v+m)*255).toString(16).padStart(2,'0');
+  const hex2=val=>Math.round((val+m)*255).toString(16).padStart(2,'0');
   return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
 }
 
@@ -33,14 +34,14 @@ const SCREEN_DPI = 96;
 const IMAGE_DPI = 300;
 const SCALE_REAL = SCREEN_DPI / IMAGE_DPI; // ~0.32 = taille réelle
 
-export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave }) {
+export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorrectFinesse, onExpandBordure, onSave, setFiles }) {
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1); // 1 = taille réelle, 2 = x2
   const correctionIntensity = 1.3; // intensité fixe
   const [showConfirm, setShowConfirm] = useState(false);
-  const [bgColor, setBgColor] = useState('#9ca3af'); // fond du panneau gauche (gris moyen)
+  const [bgColor, setBgColor] = useState('#d2d2d2'); // fond du panneau gauche (gris clair L≈210 pour tissu clair par défaut)
   const [borderOverlaySrc, setBorderOverlaySrc] = useState(null);
   const [borderOpacity, setBorderOpacity] = useState(0);
   const [dilatedOpacity, setDilatedOpacity] = useState(0);
@@ -101,7 +102,9 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
     const v = Math.round(Math.max(0, Math.min(100, 100 - ((e.clientY - rect.top) / rect.height) * 100)));
     setHslEditor(prev => {
       const updated = { ...prev, s, v };
-      setBgColor(hsvToHex(updated.h, updated.s, updated.v));
+      const hex = hsvToHex(updated.h, updated.s, updated.v);
+      console.log(`[picker] h=${updated.h} s=${s} v=${v} → ${hex}`);
+      setBgColor(hex);
       return updated;
     });
   }, []);
@@ -423,43 +426,59 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
     setIsSaving(false);
   };
 
-  // Fermeture : si modifié (correction ou bordure/dilatation), afficher le dialogue
-  const hasBorderChanges = (borderOpacity > 0 || dilatedOpacity > 0) && file.dilated4Src;
+  // Fermeture : toujours afficher le dialogue de confirmation
+  const hasBorderChanges = (dilatedOpacity > 0 && file.dilated4Src) || showContour;
   const handleRequestClose = () => {
-    if (file.correctedSrc || hasBorderChanges) {
-      setShowConfirm(true);
-    } else {
-      onClose(false);
-    }
+    setShowConfirm(true);
   };
 
   const handleConfirmSave = async () => {
     setShowConfirm(false);
     setIsSaving(true);
     startTimer('Enregistrement en cours');
+    console.log('[SeriLight Save] tissuMode=', tissuMode, 'showContour=', showContour, 'contourColor=', contourColor, 'dilatedOpacity=', dilatedOpacity);
     try {
       // 1) Si correction finesses, sauvegarder d'abord
       if (file.correctedSrc) {
+        console.log('[SeriLight Save] Sauvegarde correction finesses...');
         await onSave(file.id);
       }
-      // 2) Si bordure/dilatation modifiées, composer puis sauvegarder
+      // 2) Si modifications (dilaté ou contour), composer via route SeriLight
       if (hasBorderChanges) {
-        const resp = await fetch('/api/analyze/compose-border', {
+        console.log('[SeriLight Save] Composition SeriLight...');
+        const resp = await fetch('/api/analyze/compose-serilight', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: file.id, border_opacity: borderOpacity, dilated_opacity: dilatedOpacity }),
+          body: JSON.stringify({
+            file_id: file.id,
+            contour_color: contourColor,
+            show_contour: showContour,
+            dilated_opacity: dilatedOpacity,
+          }),
         });
+        console.log('[SeriLight Save] compose status=', resp.status);
         if (resp.ok) {
-          // Sauvegarder le composé
-          await fetch('/api/analyze/save-correction', {
+          // Sauvegarder le composé côté serveur
+          const saveResp = await fetch('/api/analyze/save-correction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_id: file.id, source: 'composed' }),
           });
+          console.log('[SeriLight Save] save-correction status=', saveResp.status);
+          // Rafraîchir la thumbnail côté client
+          if (setFiles) {
+            const ts = Date.now();
+            setFiles(prev => prev.map(ff => ff.id !== file.id ? ff : {
+              ...ff,
+              correctedSrc: null,
+              corrected: true,
+              thumbnailUrl: `/uploads/${file.id}/thumbnail.png?t=${ts}`,
+            }));
+          }
         }
       }
     } catch (err) {
-      console.error('[FinesseModal] Erreur sauvegarde:', err);
+      console.error('[SeriLight Save] Erreur:', err);
     }
     stopTimer();
     setIsSaving(false);
@@ -501,7 +520,8 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
 
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
-            {/* Groupe Actions finesses */}
+            <span className="text-3xl font-bold text-gray-400 tracking-widest uppercase px-3">SeriLight</span>
+
             <div className="w-px h-7 bg-gray-200 mx-1" />
 
             {/* Slider bordure intérieure */}
@@ -532,14 +552,21 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
             })()}
             <button onClick={() => {
               if (showFoncePopup) { alert('Fermez la fenêtre tissu foncé'); return; }
-              setTissuMode(tissuMode === 'clair' ? null : 'clair');
+              setTissuMode('clair');
+              setShowContour(false);
+              setContourColor(null);
+              setBgColor('#d2d2d2');
+              setBgMode('plain');
             }}
               className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${showFoncePopup ? 'bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed' : tissuMode === 'clair' ? 'bg-yellow-300 text-yellow-900 border-yellow-500 ring-2 ring-yellow-400' : 'bg-yellow-100 text-yellow-800 border-yellow-300 hover:bg-yellow-200'}`}>
               Version tissu clair
             </button>
             <button onClick={() => {
-              if (tissuMode === 'fonce') { setTissuMode(null); setShowFoncePopup(false); setShowContour(false); setContourColor(null); }
-              else { setTissuMode('fonce'); setShowFoncePopup(true); setDilatedOpacity(1); }
+              setTissuMode('fonce');
+              setShowFoncePopup(true);
+              setDilatedOpacity(1);
+              setBgColor('#9ca3af');
+              setBgMode('plain');
             }}
               className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${tissuMode === 'fonce' ? 'bg-gray-900 text-white border-blue-500 ring-2 ring-blue-400' : 'bg-gray-700 text-white border-gray-600 hover:bg-gray-800'}`}>
               Version tissu foncé
@@ -575,8 +602,8 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
           {/* Texte mode tissu — superposé en haut des panneaux */}
           {tissuMode && (
             <div className="absolute top-4 left-0 right-0 z-40 flex justify-center pointer-events-none">
-              <span className={`text-[22px] font-bold italic px-6 py-1 rounded-lg shadow-lg ${tissuMode === 'clair' ? 'text-yellow-800 bg-yellow-100/90' : 'text-blue-200 bg-gray-800/90'}`}>
-                {tissuMode === 'clair' ? 'dessin modifié pour tissus clairs' : 'dessin modifié pour tissus foncés'}
+              <span className={`text-[18px] font-bold italic px-6 py-1 rounded-lg shadow-lg ${tissuMode === 'clair' ? 'text-yellow-800 bg-yellow-100/90' : 'text-blue-200 bg-gray-800/90'}`}>
+                {tissuMode === 'clair' ? "Vous avez choisi de traiter le dessin en mode \"tissu clair\", vous pouvez voir le rendu du dessin en changeant la couleur du fond" : "Vous avez choisi de traiter le dessin en mode \"tissu foncé\", vous pouvez voir le rendu du dessin en changeant la couleur du fond"}
               </span>
             </div>
           )}
@@ -722,8 +749,12 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
             }}>
               <div style={{ position: 'relative', width: `${(file.widthPx || 1000) * SCALE_REAL * zoomLevel}px`, height: `${(file.heightPx || 1000) * SCALE_REAL * zoomLevel}px`, flexShrink: 0 }}>
                 {/* Image dilatée (sous l'originale) */}
-                {/* Contour 7px couleur figée en arrière-plan */}
-                {showContour && contourColor && file.contour7Src && (
+                {/* Contour 7px couleur figée en arrière-plan — masqué si luminance <= 200 */}
+                {showContour && contourColor && file.contour7Src && (() => {
+                  const bgR = parseInt(bgColor.slice(1,3),16), bgG = parseInt(bgColor.slice(3,5),16), bgB = parseInt(bgColor.slice(5,7),16);
+                  const bgL = Math.round(0.299 * bgR + 0.587 * bgG + 0.114 * bgB);
+                  if (bgL <= 200) return null;
+                  return (
                   <div style={{
                     width: '100%', height: '100%',
                     position: 'absolute', inset: 0, zIndex: 0,
@@ -733,9 +764,15 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
                     maskImage: `url(${file.contour7Src})`,
                     maskSize: '100% 100%',
                   }} />
-                )}
-                {/* Image dilatée 4px */}
-                {file.dilated4Src && dilatedOpacity > 0 && (
+                  );
+                })()}
+                {/* Image dilatée 4px — masquée si luminance <= 200 en mode foncé */}
+                {file.dilated4Src && dilatedOpacity > 0 && tissuMode === 'fonce' && (() => {
+                  const bgR = parseInt(bgColor.slice(1,3),16), bgG = parseInt(bgColor.slice(3,5),16), bgB = parseInt(bgColor.slice(5,7),16);
+                  const bgL = Math.round(0.299 * bgR + 0.587 * bgG + 0.114 * bgB);
+                  console.log('[SeriLight display] bgColor=', bgColor, 'L=', bgL, 'dilatedOpacity=', dilatedOpacity, 'tissuMode=', tissuMode);
+                  if (bgL <= 200) return null;
+                  return (
                   <img
                     src={file.dilated4Src}
                     alt="Dilaté"
@@ -746,7 +783,8 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
                       opacity: dilatedOpacity,
                     }}
                   />
-                )}
+                  );
+                })()}
                 <img
                   src={file.correctedSrc || `/uploads/${file.id}/converted.png`}
                   alt="Original"
@@ -862,7 +900,7 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
         </div>
       </div>
 
-      {/* Modale color picker — style Photoshop */}
+      {/* Modale color picker — react-colorful */}
       {hslEditor && (() => {
         const currentHex = hsvToHex(hslEditor.h, hslEditor.s, hslEditor.v);
         return (
@@ -891,46 +929,16 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
                   className="px-3 py-1 rounded text-xs font-bold text-white bg-red-400 hover:bg-red-500">✕</button>
               </div>
             </div>
-            {/* Rectangle 2D : X=saturation, Y=luminosité (value) */}
-            <div
-              ref={areaRef}
-              className="relative w-full rounded cursor-crosshair select-none"
-              style={{
-                height: 180,
-                backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                backgroundImage: 'linear-gradient(to right, #fff, transparent), linear-gradient(to top, #000, transparent)',
+            {/* Color picker */}
+            <HexColorPicker
+              color={currentHex}
+              onChange={(hex) => {
+                const { h, s, v } = hexToHsv(hex);
+                setHslEditor(prev => ({ ...prev, h, s, v }));
+                setBgColor(hex);
               }}
-              onPointerDown={e => { areaDragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleAreaPointer(e); }}
-              onPointerMove={e => { if (areaDragging.current) handleAreaPointer(e); }}
-              onPointerUp={() => { areaDragging.current = false; }}
-            >
-              {/* Curseur rond */}
-              <div className="absolute w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${hslEditor.s}% - 8px)`,
-                  top: `calc(${100 - hslEditor.v}% - 8px)`,
-                  backgroundColor: currentHex,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
-            {/* Slider teinte horizontal */}
-            <div className="relative h-4 rounded-full mt-3"
-              style={{ background: 'linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))' }}>
-              <input type="range" min="0" max="360" step="1"
-                value={hslEditor.h}
-                onChange={e => {
-                  const updated = { ...hslEditor, h: parseInt(e.target.value) };
-                  setHslEditor(updated);
-                  setBgColor(hsvToHex(updated.h, updated.s, updated.v));
-                }}
-                className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
-              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-lg pointer-events-none"
-                style={{
-                  left: `calc(${(hslEditor.h/360)*100}% - 8px)`,
-                  backgroundColor: `hsl(${hslEditor.h}, 100%, 50%)`,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.3)',
-                }} />
-            </div>
+              style={{ width: '100%' }}
+            />
           </div>
         </div>
         );
@@ -981,9 +989,11 @@ export default function FinesseModal_SeriLight({ file, finesse, onClose, onCorre
           onClick={(e) => e.stopPropagation()}
         >
           <div className="bg-white rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4">
-            <h4 className="font-bold text-lg text-gray-800 mb-2">Image modifiée</h4>
+            <h4 className="font-bold text-lg text-gray-800 mb-2">
+              {tissuMode === 'fonce' ? 'Vous avez choisi de poser le dessin sur du tissu foncé' : 'Vous avez choisi de poser le dessin sur du tissu clair'}
+            </h4>
             <p className="text-sm text-gray-600 mb-6">
-              L'image a été corrigée. Voulez-vous enregistrer les modifications ?
+              Voulez-vous enregistrer les modifications ?
             </p>
             <div className="flex gap-3 justify-end">
               <button
